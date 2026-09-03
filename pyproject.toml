@@ -1,0 +1,21 @@
+[project]
+name = "gost-ref"
+version = "1.0.0"
+description = "Библиографические ссылки и записи по ГОСТ Р 7.0.5-2008, 7.0.100-2018, 7.1-2003, 7.0.108-2022"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+pdf = ["pypdf>=3.0"]
+all = ["mcp>=1.2", "pypdf>=3.0"]
+
+[project.scripts]
+gost-ref = "gost_ref.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["gost_ref"]

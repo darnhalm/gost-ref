@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .model import Reference
 from .text import (
+    act_designation,
     EN_DASH, city_short, end_sentence, is_latin, join_areas, labels,
     responsibility_list, role_group, tidy,
 )
@@ -144,8 +145,11 @@ def format(ref: Reference) -> str:
             title = f"{title} {gmd}"
         if ref.subtitle:
             title = f"{title} : {tidy(ref.subtitle)}"
-        if ref.doc_number and ref.type != "standard":
-            title = f"{title} : {tidy(ref.doc_number)}"
+        if ref.type != "standard":
+            designation = act_designation(ref.doc_number, ref.adopted)
+            if designation:
+                title = f"{title} {designation}" if ref.subtitle \
+                    else f"{title} : {designation}"
         extent = f"{ref.total_pages} {labels(is_latin(ref.title))['extent']}" if ref.total_pages else ""
         return end_sentence(_join([title, _imprint(ref), extent, *_access(ref)]))
 

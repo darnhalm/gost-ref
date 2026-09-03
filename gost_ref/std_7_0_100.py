@@ -12,6 +12,7 @@ import re
 
 from .model import Reference
 from .text import (
+    title_with_designation,
     EM_DASH, city_full, end_sentence, is_latin, join_areas, labels,
     responsibility_list, role_group, tidy, with_subtitle,
 )
@@ -243,13 +244,8 @@ def _standard(ref: Reference) -> list[str]:
 
 
 def _law(ref: Reference) -> list[str]:
-    title = with_subtitle(ref.title, ref.subtitle)
-    if ref.doc_number:
-        title = f"{title} : {tidy(ref.doc_number)}"
-    if ref.adopted:
-        adopted = tidy(ref.adopted)
-        bracketed = re.match(r"^(принят|одобрен|утвержд)", adopted, re.I)
-        title = f"{title} : [{adopted}]" if bracketed else f"{title} : {adopted}"
+    title = title_with_designation(ref.title, ref.subtitle,
+                                   ref.doc_number, ref.adopted)
     juris = tidy(ref.jurisdiction)
     opening = f"{juris} {title}" if juris else title
     container = _container_area(ref)

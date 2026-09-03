@@ -791,3 +791,76 @@ def test_pair_can_use_71_for_the_record():
                            total_pages="240"), record_standard="7.1")
     assert r["record"]["standard"] == "7.1"
     assert "[Текст]" in r["record"]["text"]
+
+
+# ---------------------------------------------------------------------------
+# Обозначение нормативного акта из раздельных полей
+#
+# Дефект, найденный на приказе Минкультуры № 827: номер и дата, поданные
+# полями doc_number/adopted, вставали в записи вторым двоеточием
+# («: 827 : 23.07.2020»), а из сетевой сноски пропадали вовсе — форматтер
+# 7.0.108 их вообще не читал.
+# ---------------------------------------------------------------------------
+
+from gost_ref.text import act_designation, title_with_designation
+
+
+def test_designation_bare_fields_get_prefixes():
+    assert act_designation("827", "23.07.2020") == "от 23.07.2020 № 827"
+
+
+def test_designation_keeps_already_formatted_values():
+    assert act_designation("№ 827", "от 23.07.2020") == "от 23.07.2020 № 827"
+
+
+def test_designation_verb_form_goes_in_brackets_after_number():
+    assert act_designation("827", "принят Государственной Думой 21.07.2020") == \
+        "№ 827 (принят Государственной Думой 21.07.2020)"
+
+
+def test_designation_single_field():
+    assert act_designation("131-ФЗ", "") == "№ 131-ФЗ"
+    assert act_designation("", "06.10.2003") == "от 06.10.2003"
+    assert act_designation("", "") == ""
+
+
+def test_designation_attaches_to_subtitle_without_colon():
+    assert title_with_designation("Об утверждении Правил", "приказ Минкультуры",
+                                  "827", "23.07.2020") == \
+        "Об утверждении Правил : приказ Минкультуры от 23.07.2020 № 827"
+
+
+def test_law_designation_identical_across_standards():
+    fields = {"type": "law", "title": "Об объектах культурного наследия",
+              "subtitle": "Федеральный закон",
+              "doc_number": "73-ФЗ", "adopted": "25.06.2002"}
+    tail = "Федеральный закон от 25.06.2002 № 73-ФЗ"
+    for key in ("7.0.5", "7.0.100", "7.1"):
+        assert tail in g.format_reference(fields, key), key
+
+
+def test_law_designation_survives_network_footnote():
+    # Сетевая сноска идёт по 7.0.108 — раньше обозначение там терялось.
+    out = g.format_pair({
+        "type": "law", "title": "Об утверждении Единых правил",
+        "subtitle": "приказ Министерства культуры Российской Федерации",
+        "doc_number": "827", "adopted": "23.07.2020", "year": "2020",
+        "container": "Министерство культуры Российской Федерации",
+        "container_subtitle": "официальный сайт",
+        "url": "https://culture.gov.ru/documents/pravila/",
+        "access_date": "17.08.2026",
+    })
+    assert out["footnote"]["standard"] == "7.0.108"
+    for form in ("footnote", "record"):
+        assert "от 23.07.2020 № 827" in out[form]["text"], form
+        assert " : 827 " not in out[form]["text"], form
+
+
+def test_standard_designation_stays_before_title_in_network_reference():
+    out = g.format_reference({
+        "type": "standard", "doc_number": "ГОСТ Р 56891.2-2016",
+        "title": "Сохранение объектов культурного наследия",
+        "url": "https://protect.gost.ru/document.aspx?id=203312",
+        "access_date": "03.09.2026",
+    }, "7.0.108")
+    assert out.startswith("ГОСТ Р 56891.2-2016. Сохранение")

@@ -235,3 +235,57 @@ def join_sentences(parts) -> str:
             continue
         out = f"{out} {p}" if out.endswith((".", "!", "?")) else f"{out}. {p}"
     return out
+
+
+# --------------------------------------------------------------------------
+# Обозначение нормативного акта
+# --------------------------------------------------------------------------
+
+_BARE_NUMBER_RE = re.compile(r"^[\d][\d\-./]*(?:[-–—][А-ЯЁA-Z]{1,4})?$")
+_BARE_DATE_RE = re.compile(r"^\d{1,2}[./]\d{1,2}[./]\d{2,4}$|^\d{4}-\d{2}-\d{2}$")
+_VERB_RE = re.compile(r"^(принят|одобрен|утвержд|введ|подписан)", re.I)
+
+
+def act_designation(doc_number: str = "", adopted: str = "") -> str:
+    """Обозначение акта одной фразой: «от 23.07.2020 № 827».
+
+    По ГОСТ дата принятия и номер документа образуют единое обозначение,
+    а не два самостоятельных элемента. Раздельная подача полей — частый
+    случай (данные приходят из карточки базы), поэтому склеиваем здесь,
+    а не в каждом форматтере.
+
+    Уже оформленные значения не трогаем: «№ 827» останется как есть,
+    «принят Государственной Думой 21.07.2020» — тоже.
+    """
+    number = tidy(doc_number)
+    date = tidy(adopted)
+
+    if number and _BARE_NUMBER_RE.match(number):
+        number = f"№ {number}"
+    if date and _BARE_DATE_RE.match(date):
+        date = f"от {date}"
+
+    if date and number:
+        # «от …» всегда впереди номера; глагольная форма — позади.
+        if _VERB_RE.match(date):
+            return f"{number} ({date})"
+        return f"{date} {number}"
+    return date or number
+
+
+def title_with_designation(title: str, subtitle: str,
+                           doc_number: str = "", adopted: str = "") -> str:
+    """Заглавие с подзаголовком и обозначением акта.
+
+    Обозначение примыкает к подзаголовку через пробел («… : приказ … от
+    23.07.2020 № 827»), потому что вместе они образуют одни сведения,
+    относящиеся к заглавию. Без подзаголовка обозначение вводится
+    двоеточием как самостоятельные сведения.
+    """
+    full = with_subtitle(title, subtitle)
+    designation = act_designation(doc_number, adopted)
+    if not designation:
+        return full
+    if not full:
+        return designation
+    return f"{full} {designation}" if tidy(subtitle) else f"{full} : {designation}"

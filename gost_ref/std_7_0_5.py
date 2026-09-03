@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .model import Reference
 from .text import (
+    title_with_designation,
     city_short, end_sentence, heading_list, is_latin, join_sentences, labels,
     responsibility_list, role_group, tidy, with_subtitle,
 )
@@ -156,11 +157,8 @@ def _standard(ref: Reference) -> list[str]:
 
 
 def _law(ref: Reference) -> list[str]:
-    title = with_subtitle(ref.title, ref.subtitle)
-    if ref.doc_number:
-        title = f"{title} : {tidy(ref.doc_number)}"
-    if ref.adopted:
-        title = f"{title} : {tidy(ref.adopted)}"
+    title = title_with_designation(ref.title, ref.subtitle,
+                                   ref.doc_number, ref.adopted)
     container = _container_block(ref)
     first = f"{title} // {container}" if container else title
     return [first, tidy(ref.year), _numbering(ref), _extent(ref)]

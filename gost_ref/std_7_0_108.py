@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from .model import Reference
 from .text import (
+    title_with_designation,
     city_short, end_sentence, heading_list, is_latin, join_sentences, labels,
     responsibility_list, role_group, tidy, today, with_subtitle,
 )
@@ -38,7 +39,12 @@ def _responsibility(ref: Reference) -> str:
 
 def _opening(ref: Reference) -> str:
     head = heading_list(ref.primary_authors, comma=False) if ref.use_author_heading else ""
-    title = with_subtitle(ref.title, ref.subtitle)
+    if ref.type == "standard" and tidy(ref.doc_number):
+        # У стандарта обозначение стоит впереди заглавия, а не после него.
+        title = f"{tidy(ref.doc_number)}. {with_subtitle(ref.title, ref.subtitle)}"
+    else:
+        title = title_with_designation(ref.title, ref.subtitle,
+                                       ref.doc_number, ref.adopted)
     if ref.material_designation:
         title = f"{title} : {tidy(ref.material_designation)}"
     resp = _responsibility(ref)

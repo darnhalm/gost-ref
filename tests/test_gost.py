@@ -246,7 +246,7 @@ def test_validate_catches_electronic_on_print():
 
 def test_validate_catches_url_without_access_date():
     report = g.validate(dict(type="webpage", title="Заглавие", url="http://example.ru"))
-    assert any(e["code"] == "no-access-date" for e in report["errors"])
+    assert any(e["code"] == "no-access-date" for e in report["warnings"])
 
 
 def test_validate_catches_future_access_date():

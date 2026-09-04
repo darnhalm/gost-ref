@@ -51,8 +51,10 @@ def check_fields(ref: Reference, standard: str = "7.0.100") -> list[dict[str, st
                             "ставят печатным изданиям."))
 
     if ref.url and not ref.access_date and not ref.publication_date:
-        found.append(_issue("error", "no-access-date",
-                            "URL без даты обращения.",
+        found.append(_issue("warning", "no-access-date",
+                            "URL без даты обращения. Дата обращения обязательна "
+                            "по 7.0.5, 7.0.100 и 7.0.108, но на практике её "
+                            "опускают, поэтому это замечание, а не ошибка.",
                             "Добавьте access_date в формате ДД.ММ.ГГГГ."))
 
     if ref.access_date:

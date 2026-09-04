@@ -22,12 +22,9 @@ CITY_ABBR = {
     "петербург": "СПб.",
     "нижний новгород": "Н. Новгород",
     "ростов-на-дону": "Ростов н/Д",
-    "лондон": "Л.",
     "london": "L.",
     "paris": "P.",
-    "париж": "П.",
     "new york": "N. Y.",
-    "нью-йорк": "Н.-Й.",
     "berlin": "B.",
     "киев": "Киев",
     "минск": "Минск",
@@ -161,7 +158,14 @@ _CYR_RE = re.compile(r"[А-Яа-яЁё]")
 
 
 def is_latin(*chunks) -> bool:
-    """Латиница ли источник: у иностранных изданий другие обозначения томов."""
+    """Латиница ли источник: у иностранных изданий другие обозначения томов.
+
+    Язык обозначений («Т.» или «Vol.», «С.» или «P.») определяется языком
+    ЗАГЛАВИЯ описываемой части, а не языком контейнера: русская статья в
+    англоязычном журнале остаётся русской записью. Поэтому вызывающий
+    передаёт сюда только заглавие; контейнер учитывается лишь тогда,
+    когда заглавия нет.
+    """
     text = " ".join(str(c or "") for c in chunks)
     return len(_LATIN_RE.findall(text)) > len(_CYR_RE.findall(text))
 
@@ -195,13 +199,22 @@ def with_subtitle(title: str, subtitle: str) -> str:
     return f"{title} : {subtitle}"
 
 
-def responsibility_list(people, max_named: int = 4, et_al: str = "[и др.]") -> str:
-    """«И. И. Иванов, П. П. Петров» либо «И. И. Иванов [и др.]»."""
+def responsibility_list(people, max_named: int = 4, et_al: str = "[и др.]",
+                        keep: int = 1) -> str:
+    """Сведения об ответственности; keep — сколько имён оставить при усечении.
+
+    Стандарты расходятся. ГОСТ Р 7.0.5-2008 в собственном примере
+    («Краткий экономический словарь / А. Н. Азрилиян [и др.]») оставляет
+    одно имя. ГОСТ Р 7.0.100-2018, п. 5.2.6.8: при пяти и более авторах
+    приводят имена первых трёх и «[и др.]». Поэтому число задаёт
+    вызывающий форматтер, а не общая функция.
+    """
     people = [p for p in people if p.surname or p.initials]
     if not people:
         return ""
     if len(people) > max_named:
-        return f"{people[0].responsibility()} {et_al}"
+        named = ", ".join(p.responsibility() for p in people[:max(1, keep)])
+        return f"{named} {et_al}"
     return ", ".join(p.responsibility() for p in people)
 
 
@@ -244,6 +257,10 @@ def join_sentences(parts) -> str:
 _BARE_NUMBER_RE = re.compile(r"^[\d][\d\-./]*(?:[-–—][А-ЯЁA-Z]{1,4})?$")
 _BARE_DATE_RE = re.compile(r"^\d{1,2}[./]\d{1,2}[./]\d{2,4}$|^\d{4}-\d{2}-\d{2}$")
 _VERB_RE = re.compile(r"^(принят|одобрен|утвержд|введ|подписан)", re.I)
+# Обозначение стандарта: «7.0.5-2008», «ГОСТ Р 1.5-2012», «ISO 690».
+# Знак «№» перед ним не ставится никогда.
+_STANDARD_NUMBER_RE = re.compile(
+    r"^(?:\d+\.)+\d+[-–—]\d{2,4}$|^(ГОСТ|ОСТ|СТО|СТБ|ПНСТ|ISO|IEC|EN|DIN)\b", re.I)
 
 
 
@@ -287,7 +304,8 @@ def act_designation(doc_number: str = "", adopted: str = "") -> str:
     number = normalize_designation_dash(tidy(doc_number))
     date = normalize_designation_dash(tidy(adopted))
 
-    if number and _BARE_NUMBER_RE.match(number):
+    if number and _BARE_NUMBER_RE.match(number) \
+            and not _STANDARD_NUMBER_RE.match(number):
         number = f"№ {number}"
     if date and _BARE_DATE_RE.match(date):
         date = f"от {date}"

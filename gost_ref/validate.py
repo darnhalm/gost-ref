@@ -107,6 +107,14 @@ def check_fields(ref: Reference, standard: str = "7.0.100") -> list[dict[str, st
                             "Проверьте действующий статус стандарта в фонде Росстандарта: "
                             "protect.gost.ru — отменённый ГОСТ в списке считается ошибкой."))
 
+    if ref.type == "standard" and tidy(ref.doc_number) \
+            and not re.match(r"^(ГОСТ|ОСТ|СТО|СТБ|ПНСТ|ISO|IEC|EN|DIN)\b",
+                             tidy(ref.doc_number), re.I):
+        found.append(_issue("warning", "designation-no-index",
+                            "В обозначении нет индекса документа: ожидается "
+                            "«ГОСТ Р 7.0.5-2008», а не «7.0.5-2008». Без индекса "
+                            "ссылка не опознаётся как ссылка на стандарт."))
+
     if has_wrong_designation_dash(ref.doc_number):
         found.append(_issue("warning", "designation-dash",
                             "В обозначении стоял не дефис, а тире — приведено к дефису. "

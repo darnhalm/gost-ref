@@ -56,7 +56,7 @@ def _responsibility(ref: Reference, full_names: bool = False) -> str:
         if full_names:
             groups.append("; ".join(p.full() for p in ref.primary_authors))
         else:
-            groups.append(responsibility_list(ref.primary_authors, max_named=4))
+            groups.append(responsibility_list(ref.primary_authors, max_named=4, keep=3))
     if ref.editors:
         groups.append(role_group(ref.editors, "под редакцией"))
     if ref.compilers:
@@ -97,7 +97,7 @@ def _extent(ref: Reference) -> str:
 
 
 def _numbering(ref: Reference) -> str:
-    lb = labels(is_latin(ref.title, ref.container))
+    lb = labels(is_latin(ref.title or ref.container))
     bits = []
     if ref.volume:
         bits.append(f"{lb['vol']} {tidy(ref.volume)}")
@@ -166,7 +166,7 @@ def _component(ref: Reference) -> list[str]:
     else:
         tail = [_imprint(ref), _numbering(ref)]
     if ref.pages:
-        tail.append(f"{labels(is_latin(ref.title, ref.container))['pages']} {ref.pages}")
+        tail.append(f"{labels(is_latin(ref.title or ref.container))['pages']} {ref.pages}")
     if ref.is_electronic:
         tail.extend(_access(ref))
     elif ref.doi:

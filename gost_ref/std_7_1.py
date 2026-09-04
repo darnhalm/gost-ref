@@ -39,7 +39,7 @@ def _designation(ref: Reference, use: bool) -> str:
 def _responsibility(ref: Reference) -> str:
     groups: list[str] = []
     if ref.primary_authors:
-        groups.append(responsibility_list(ref.primary_authors, max_named=3))
+        groups.append(responsibility_list(ref.primary_authors, max_named=4, keep=3))
     if ref.editors:
         groups.append(role_group(ref.editors, "под ред."))
     if ref.compilers:
@@ -73,7 +73,7 @@ def _imprint(ref: Reference) -> str:
 
 
 def _numbering(ref: Reference) -> str:
-    lb = labels(is_latin(ref.title, ref.container))
+    lb = labels(is_latin(ref.title or ref.container))
     bits = []
     if ref.volume:
         bits.append(f"{lb['vol']} {tidy(ref.volume)}")
@@ -119,7 +119,7 @@ def format(ref: Reference) -> str:
         tail = [tidy(ref.year)] if ref.type == "article" else [_imprint(ref)]
         tail.append(_numbering(ref))
         if ref.pages:
-            tail.append(f"{labels(is_latin(ref.title, ref.container))['pages']} {ref.pages}")
+            tail.append(f"{labels(is_latin(ref.title or ref.container))['pages']} {ref.pages}")
         tail.extend(_access(ref))
         return end_sentence(_join([opening, *tail]))
 

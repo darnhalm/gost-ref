@@ -906,3 +906,102 @@ def test_designation_dash_reported_as_warning():
     codes = [w["code"] for w in report["warnings"]]
     assert "designation-dash" in codes
     assert not report["errors"]
+
+
+# ---------------------------------------------------------------------------
+# Находки нормативной ревизии 4 сентября 2026
+# ---------------------------------------------------------------------------
+
+def test_number_sign_never_precedes_standard_designation():
+    # Раздел 7 ГОСТ Р 1.5-2012: знак «№» в обозначении стандарта не ставится.
+    from gost_ref.text import act_designation
+    assert act_designation("7.0.5-2008") == "7.0.5-2008"
+    assert act_designation("ГОСТ Р 1.5-2012") == "ГОСТ Р 1.5-2012"
+    # у нормативного акта «№» по-прежнему нужен
+    assert act_designation("827", "23.07.2020") == "от 23.07.2020 № 827"
+
+
+def test_ambiguous_city_abbreviations_removed():
+    # «Л.» закреплено за Ленинградом, «П.» за Петроградом: сокращать ими
+    # Лондон и Париж — двусмысленность.
+    from gost_ref.text import CITY_ABBR
+    for city in ("лондон", "париж", "нью-йорк"):
+        assert city not in CITY_ABBR, city
+
+
+def test_language_of_labels_follows_title_not_container():
+    # Русская статья в англоязычном журнале остаётся русской записью.
+    out = g.format_reference({
+        "type": "article", "authors": "Иванов И. И.",
+        "title": "Проблемы виртуализации музейных предметов",
+        "container": "Journal of Computer and System Sciences International",
+        "year": "2024", "issue": "3", "pages": "12-15"}, "7.0.5")
+    assert "С. 12–15" in out
+    assert "P. " not in out and "No. " not in out
+
+
+def test_five_authors_keep_three_in_record():
+    # ГОСТ Р 7.0.100-2018, п. 5.2.6.8: первые три имени и «[и др.]».
+    out = g.format_reference({
+        "type": "book",
+        "authors": ["Иванов И. И.", "Петров П. П.", "Сидоров С. С.",
+                    "Кузнецов К. К.", "Смирнов С. С."],
+        "title": "Заглавие", "city": "Москва", "year": "2020"}, "7.0.100")
+    assert "И. И. Иванов, П. П. Петров, С. С. Сидоров [и др.]" in out
+
+
+def test_four_authors_keep_one_in_footnote():
+    # А в подстрочной ссылке пример самого 7.0.5 оставляет одно имя.
+    out = g.format_reference({
+        "type": "book",
+        "authors": ["Азрилиян А. Н.", "Иванов И. И.", "Петров П. П.",
+                    "Сидоров С. С."],
+        "title": "Краткий экономический словарь", "city": "Москва",
+        "year": "2002"}, "7.0.5")
+    assert "А. Н. Азрилиян [и др.]" in out
+
+
+def test_series_appears_in_footnote():
+    out = g.format_reference({
+        "type": "book", "authors": "Иванов И. И.", "title": "Заглавие",
+        "city": "Москва", "year": "2020", "series": "Мир культуры"}, "7.0.5")
+    assert "(Мир культуры)" in out
+
+
+def test_archive_search_data_after_double_slash():
+    # ГОСТ Р 7.0.5-2008, п. 11.7.
+    out = g.format_reference({
+        "type": "archive", "title": "Дело о музее", "archive": "ГАРФ",
+        "archive_ref": "Ф. 1. Оп. 2. Д. 3"}, "7.0.5")
+    assert "Дело о музее // ГАРФ. Ф. 1. Оп. 2. Д. 3." == out
+
+
+def test_seventy_one_lists_all_four_authors():
+    # ГОСТ 7.1-2003, п. 5.3.3: при четырёх авторах приводят всех четверых.
+    out = g.format_reference({
+        "type": "book",
+        "authors": ["Иванов И. И.", "Петров П. П.", "Сидоров С. С.",
+                    "Алексеев А. А."],
+        "title": "Заглавие", "city": "Москва", "year": "2020"}, "7.1")
+    assert "И. И. Иванов, П. П. Петров, С. С. Сидоров, А. А. Алексеев" in out
+    assert "[и др.]" not in out
+
+
+def test_seventy_one_five_authors_keep_three():
+    out = g.format_reference({
+        "type": "book",
+        "authors": ["Иванов И. И.", "Петров П. П.", "Сидоров С. С.",
+                    "Алексеев А. А.", "Кузнецов К. К."],
+        "title": "Заглавие", "city": "Москва", "year": "2020"}, "7.1")
+    assert "И. И. Иванов, П. П. Петров, С. С. Сидоров [и др.]" in out
+
+
+def test_standard_without_index_is_flagged():
+    report = g.format_and_check({
+        "type": "standard", "doc_number": "7.0.5-2008",
+        "title": "Библиографическая ссылка"}, "7.0.100")
+    assert "designation-no-index" in [w["code"] for w in report["warnings"]]
+    report_ok = g.format_and_check({
+        "type": "standard", "doc_number": "ГОСТ Р 7.0.5-2008",
+        "title": "Библиографическая ссылка"}, "7.0.100")
+    assert "designation-no-index" not in [w["code"] for w in report_ok["warnings"]]

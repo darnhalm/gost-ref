@@ -55,7 +55,7 @@ def _opening(ref: Reference) -> str:
 
 
 def _numbering(ref: Reference) -> str:
-    lb = labels(is_latin(ref.title, ref.container))
+    lb = labels(is_latin(ref.title or ref.container))
     bits = []
     if ref.volume:
         bits.append(f"{lb['vol']} {tidy(ref.volume)}")
@@ -103,7 +103,7 @@ def format(ref: Reference) -> str:
     parts.append(tidy(ref.year))
     parts.append(_numbering(ref))
     if ref.pages:
-        parts.append(f"{labels(is_latin(ref.title, ref.container))['pages']} {ref.pages}")
+        parts.append(f"{labels(is_latin(ref.title or ref.container))['pages']} {ref.pages}")
     if ref.duration:
         parts.append(tidy(ref.duration))
     if ref.update_note:

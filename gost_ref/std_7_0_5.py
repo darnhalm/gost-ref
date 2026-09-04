@@ -66,7 +66,7 @@ def _imprint(ref: Reference) -> str:
 
 
 def _extent(ref: Reference) -> str:
-    lb = labels(is_latin(ref.title, ref.container))
+    lb = labels(is_latin(ref.title or ref.container))
     if ref.pages:
         return f"{lb['pages']} {ref.pages}"
     if ref.total_pages:
@@ -76,7 +76,7 @@ def _extent(ref: Reference) -> str:
 
 def _numbering(ref: Reference) -> str:
     """«Т. 5, № 3», «№ 2», «Vol. 58, No. 3»."""
-    lb = labels(is_latin(ref.title, ref.container))
+    lb = labels(is_latin(ref.title or ref.container))
     bits = []
     if ref.volume:
         bits.append(f"{lb['vol']} {tidy(ref.volume)}")
@@ -111,8 +111,14 @@ def _container_block(ref: Reference) -> str:
 # Типы
 # --------------------------------------------------------------------------
 
+def _series(ref: Reference) -> str:
+    """Сведения о серии в круглых скобках — элемент подстрочной ссылки."""
+    return f"({tidy(ref.series)})" if tidy(ref.series) else ""
+
+
 def _book(ref: Reference) -> list[str]:
-    return [_opening(ref), tidy(ref.edition), _imprint(ref), _extent(ref)]
+    return [_opening(ref), tidy(ref.edition), _imprint(ref), _extent(ref),
+            _series(ref)]
 
 
 def _component(ref: Reference) -> list[str]:
@@ -175,11 +181,16 @@ def _treaty(ref: Reference) -> list[str]:
 
 
 def _archive(ref: Reference) -> list[str]:
-    head = tidy(ref.archive)
-    parts = [head, tidy(ref.archive_ref)]
-    if ref.title:
-        parts.insert(0, _opening(ref))
-    return parts
+    """Архивный документ: сведения о документе, знак «//», поисковые данные.
+
+    ГОСТ Р 7.0.5-2008, п. 11.7: сведения о самом документе отделяют от
+    поисковых сведений знаком две косые черты с пробелами до и после.
+    """
+    search = join_sentences([x for x in (tidy(ref.archive), tidy(ref.archive_ref)) if x])
+    body = _opening(ref) if ref.title else ""
+    if body and search:
+        return [f"{body} // {search}"]
+    return [body or search]
 
 
 _DISPATCH = {

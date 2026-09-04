@@ -246,6 +246,33 @@ _BARE_DATE_RE = re.compile(r"^\d{1,2}[./]\d{1,2}[./]\d{2,4}$|^\d{4}-\d{2}-\d{2}$
 _VERB_RE = re.compile(r"^(принят|одобрен|утвержд|введ|подписан)", re.I)
 
 
+
+# Знаки, которыми в обозначение стандарта попадает не дефис: короткое и
+# длинное тире, неразрывный дефис, минус, фигурное тире. Все приводим
+# к дефису-минусу U+002D.
+_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D"
+_DESIGNATION_DASH_RE = re.compile(rf"(?<=[\w.])[{_DASHES}](?=\w)")
+
+
+def normalize_designation_dash(value: str) -> str:
+    """Дефис в обозначении стандарта или акта вместо тире.
+
+    ГОСТ Р 1.5-2012 (п. 7.1) говорит, что год утверждения отделяется от
+    регистрационного номера «тире», но во всех примерах самого стандарта
+    и во всех официальных перечнях напечатан дефис-минус: «ГОСТ Р
+    54358-2011», «ПНСТ 1-2012». Прямого запрета на U+2013 в нормативных
+    текстах нет — это типографская норма, а не буква стандарта. Приводим
+    к дефису по двум причинам: так печатают все официальные источники,
+    и поиск по обозначению с коротким тире в фонде Росстандарта и в РИНЦ
+    не находит документ.
+    """
+    return _DESIGNATION_DASH_RE.sub("-", str(value or ""))
+
+
+def has_wrong_designation_dash(value: str) -> bool:
+    """Стоит ли в обозначении не дефис (для замечания валидатора)."""
+    return normalize_designation_dash(value) != str(value or "")
+
 def act_designation(doc_number: str = "", adopted: str = "") -> str:
     """Обозначение акта одной фразой: «от 23.07.2020 № 827».
 
@@ -257,8 +284,8 @@ def act_designation(doc_number: str = "", adopted: str = "") -> str:
     Уже оформленные значения не трогаем: «№ 827» останется как есть,
     «принят Государственной Думой 21.07.2020» — тоже.
     """
-    number = tidy(doc_number)
-    date = tidy(adopted)
+    number = normalize_designation_dash(tidy(doc_number))
+    date = normalize_designation_dash(tidy(adopted))
 
     if number and _BARE_NUMBER_RE.match(number):
         number = f"№ {number}"

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .model import Reference
 from .text import (
+    normalize_designation_dash,
     act_designation,
     EN_DASH, city_short, end_sentence, is_latin, join_areas, labels,
     responsibility_list, role_group, tidy,
@@ -139,7 +140,7 @@ def format(ref: Reference) -> str:
     if ref.type in ("standard", "law", "treaty"):
         title = tidy(ref.title)
         if ref.doc_number and ref.type == "standard":
-            title = f"{tidy(ref.doc_number)}. {title}"
+            title = f"{normalize_designation_dash(tidy(ref.doc_number))}. {title}"
         gmd = _designation(ref, True)
         if gmd:
             title = f"{title} {gmd}"

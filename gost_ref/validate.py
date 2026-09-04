@@ -14,7 +14,7 @@ from datetime import date, datetime
 from typing import Any
 
 from .model import Reference
-from .text import tidy
+from .text import has_wrong_designation_dash, tidy
 
 
 def _issue(level: str, code: str, message: str, fix: str = "") -> dict[str, str]:
@@ -106,6 +106,15 @@ def check_fields(ref: Reference, standard: str = "7.0.100") -> list[dict[str, st
         found.append(_issue("note", "check-status",
                             "Проверьте действующий статус стандарта в фонде Росстандарта: "
                             "protect.gost.ru — отменённый ГОСТ в списке считается ошибкой."))
+
+    if has_wrong_designation_dash(ref.doc_number):
+        found.append(_issue("warning", "designation-dash",
+                            "В обозначении стоял не дефис, а тире — приведено к дефису. "
+                            "ГОСТ Р 1.5-2012 (п. 7.1) называет этот знак «тире», но во всех "
+                            "примерах самого стандарта и в перечнях Росстандарта напечатан "
+                            "дефис-минус. Прямого запрета на тире в нормативных текстах нет, "
+                            "однако поиск по обозначению с тире в фонде Росстандарта и в РИНЦ "
+                            "документ не находит."))
 
     if len(ref.primary_authors) > 3 and standard in ("7.0.100", "7.1"):
         found.append(_issue("note", "many-authors",

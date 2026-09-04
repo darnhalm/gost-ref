@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .model import Reference
 from .text import (
+    normalize_designation_dash,
     title_with_designation,
     city_short, end_sentence, heading_list, is_latin, join_sentences, labels,
     responsibility_list, role_group, tidy, with_subtitle,
@@ -148,7 +149,7 @@ def _dissertation(ref: Reference) -> list[str]:
 
 
 def _standard(ref: Reference) -> list[str]:
-    number = tidy(ref.doc_number)
+    number = normalize_designation_dash(tidy(ref.doc_number))
     title = with_subtitle(ref.title, ref.subtitle)
     opening = f"{number}. {title}" if number else title
     if ref.status:

@@ -864,3 +864,45 @@ def test_standard_designation_stays_before_title_in_network_reference():
         "access_date": "03.09.2026",
     }, "7.0.108")
     assert out.startswith("ГОСТ Р 56891.2-2016. Сохранение")
+
+
+# ---------------------------------------------------------------------------
+# Дефис в обозначении стандарта
+#
+# ГОСТ Р 1.5-2012 (п. 7.1) называет знак между номером и годом «тире», но
+# в примерах самого стандарта и в перечнях Росстандарта напечатан
+# дефис-минус. Прямого запрета на U+2013 нет — приводим к дефису и говорим
+# об этом замечанием, а не ошибкой.
+# ---------------------------------------------------------------------------
+
+from gost_ref.text import has_wrong_designation_dash, normalize_designation_dash
+
+
+def test_designation_dash_normalized():
+    assert normalize_designation_dash("ГОСТ Р 51833–2001") == "ГОСТ Р 51833-2001"
+    assert normalize_designation_dash("ГОСТ Р 71863—2024") == "ГОСТ Р 71863-2024"
+    assert normalize_designation_dash("ГОСТ Р 1.5−2012") == "ГОСТ Р 1.5-2012"
+
+
+def test_designation_dash_leaves_correct_value_alone():
+    assert normalize_designation_dash("ГОСТ Р 56891.2-2016") == "ГОСТ Р 56891.2-2016"
+    assert not has_wrong_designation_dash("131-ФЗ")
+
+
+def test_designation_dash_fixed_in_all_standards():
+    fields = {"type": "standard", "doc_number": "ГОСТ Р 51833–2001",
+              "title": "Фотограмметрия. Термины и определения",
+              "city": "Москва", "year": "2002"}
+    for key in ("7.0.5", "7.0.100", "7.1"):
+        out = g.format_reference(fields, key)
+        assert "51833-2001" in out, key
+        assert "51833–2001" not in out, key
+
+
+def test_designation_dash_reported_as_warning():
+    report = g.format_and_check({"type": "standard",
+                                 "doc_number": "ГОСТ Р 51833–2001",
+                                 "title": "Фотограмметрия"}, "7.0.100")
+    codes = [w["code"] for w in report["warnings"]]
+    assert "designation-dash" in codes
+    assert not report["errors"]

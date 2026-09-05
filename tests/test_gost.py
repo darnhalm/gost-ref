@@ -398,6 +398,26 @@ def test_catches_snoska_style_deviations():
     assert "area-dash-in-reference" in codes
 
 
+def test_area_dash_not_triggered_by_dash_inside_output_data():
+    """area-dash-in-reference ловит область только по последовательности
+    « . — » / « . – », а не по любому короткому/длинному тире. Тире внутри
+    выходных данных (название издательства, двойная фамилия, архивный шифр)
+    ложного замечания давать не должно."""
+    from gost_ref.validate import check_string
+    clean = [
+        "Ригль А. V–A–C press. Москва, 2018. С. 25.",
+        "Зедльмайр Х. Springer–Verlag. Вена, 2000. С. 10.",
+        "Опись фонда Ф–1. Санкт-Петербург, 1999. С. 3.",
+    ]
+    for c in clean:
+        codes = {i["code"] for i in check_string(c, "7.0.5")}
+        assert "area-dash-in-reference" not in codes, c
+    # но настоящая утечка записи по 7.0.100 (« . — ») ловится
+    leak = "Иванов И. И. Заглавие. — Москва : Наука, 2019. — 200 с."
+    codes = {i["code"] for i in check_string(leak, "7.0.5")}
+    assert "area-dash-in-reference" in codes
+
+
 def test_same_data_our_705_output():
     out = g.format_reference(dict(
         type="book", authors="Пантелеев А. С.; Звездин А. Л.",

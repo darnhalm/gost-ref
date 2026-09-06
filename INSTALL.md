@@ -5,9 +5,9 @@
 нужна лишь для MCP-сервера (`mcp`) и чтения PDF (`pypdf`).
 
 ```bash
-git clone <адрес-репозитория> ~/gost-ref
+git clone https://github.com/darnhalm/gost-ref.git ~/gost-ref
 cd ~/gost-ref
-python3 -m pytest tests/ -q          # должно быть 142 passed
+python3 -m pytest tests/ -q          # должно быть 165 passed
 ```
 
 Проверка без установки:

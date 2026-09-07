@@ -7,7 +7,7 @@
 ```bash
 git clone https://github.com/darnhalm/gost-ref.git ~/gost-ref
 cd ~/gost-ref
-python3 -m pytest tests/ -q          # должно быть 167 passed
+python3 -m pytest tests/ -q          # должно быть 170 passed
 ```
 
 Проверка без установки:

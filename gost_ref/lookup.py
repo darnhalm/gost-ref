@@ -86,6 +86,29 @@ def by_doi(doi: str) -> dict[str, Any]:
         return by_datacite(clean)
 
 
+def by_crossref_title(query: str) -> dict[str, Any]:
+    """Поиск по заглавию в Crossref (`query.bibliographic`).
+
+    OpenAlex тянет из Crossref, но не всё и с задержкой, поэтому Crossref
+    спрашиваем напрямую как второй независимый индекс.
+    """
+    q = str(query or "").strip()
+    if not q:
+        raise LookupError("пустой запрос")
+    url = ("https://api.crossref.org/works?rows=5&select=DOI,title,author,"
+           "container-title,issued,volume,issue,page,ISSN,type,publisher&"
+           "query.bibliographic=" + urllib.parse.quote(q))
+    data = _get_json(url)
+    items = ((data or {}).get("message") or {}).get("items") or []
+    if not items:
+        raise LookupError("ничего не найдено")
+
+    results = [{"fields": _from_crossref(item), "doi": item.get("DOI")}
+               for item in items]
+    return {"fields": results[0]["fields"], "source": f"Crossref, {url}",
+            "candidates": results, "raw": items[0]}
+
+
 _TEXT_FIELDS = ("title", "subtitle", "container", "publisher", "city")
 
 
@@ -437,7 +460,7 @@ def enrich(query: str, kind: str = "auto") -> dict[str, Any]:
     elif kind == "isbn":
         order = [by_isbn]
     else:
-        order = [by_openalex, by_cyberleninka]
+        order = [by_openalex, by_crossref_title, by_cyberleninka]
 
     for fn in order:
         try:

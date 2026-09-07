@@ -1045,3 +1045,60 @@ def test_standard_without_index_is_flagged():
         "type": "standard", "doc_number": "ГОСТ Р 7.0.5-2008",
         "title": "Библиографическая ссылка"}, "7.0.100")
     assert "designation-no-index" not in [w["code"] for w in report_ok["warnings"]]
+
+
+# --------------------------------------------------------------------------
+# Поиск по базам (сеть не дёргаем — подменяем _get_json)
+# --------------------------------------------------------------------------
+
+def test_title_search_includes_crossref(monkeypatch):
+    """По заглавию спрашиваем OpenAlex, Crossref и КиберЛенинку — именно в этом порядке."""
+    from gost_ref import lookup
+
+    called = []
+
+    def fail(name):
+        def _fn(q):
+            called.append(name)
+            raise lookup.LookupError("ничего не найдено")
+        _fn.__name__ = name
+        return _fn
+
+    monkeypatch.setattr(lookup, "by_openalex", fail("by_openalex"))
+    monkeypatch.setattr(lookup, "by_crossref_title", fail("by_crossref_title"))
+    monkeypatch.setattr(lookup, "by_cyberleninka", fail("by_cyberleninka"))
+
+    report = lookup.enrich("Заглавие без DOI и ISBN")
+    assert called == ["by_openalex", "by_crossref_title", "by_cyberleninka"]
+    assert report["fields"] == {}
+    assert len(report["attempts"]) == 3
+    assert "РГБ" in report["manual_checks"]
+
+
+def test_crossref_title_parses_items(monkeypatch):
+    from gost_ref import lookup
+
+    payload = {"message": {"items": [{
+        "type": "journal-article",
+        "title": ["Заглавие статьи"],
+        "author": [{"family": "Иванов", "given": "Иван Иванович"}],
+        "container-title": ["Вестник"],
+        "issued": {"date-parts": [[2019]]},
+        "volume": "12", "issue": "3", "page": "45-52",
+        "DOI": "10.1234/abcd",
+    }]}}
+    monkeypatch.setattr(lookup, "_get_json", lambda url: payload)
+
+    result = lookup.by_crossref_title("Заглавие статьи")
+    assert result["source"].startswith("Crossref, ")
+    assert result["fields"]["title"] == "Заглавие статьи"
+    assert result["fields"]["pages"] == "45-52"
+    assert result["fields"]["doi"] == "10.1234/abcd"
+
+
+def test_crossref_title_raises_on_empty(monkeypatch):
+    from gost_ref import lookup
+    monkeypatch.setattr(lookup, "_get_json", lambda url: {"message": {"items": []}})
+    import pytest
+    with pytest.raises(lookup.LookupError):
+        lookup.by_crossref_title("что-то")

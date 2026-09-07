@@ -17,6 +17,19 @@ from .model import Reference
 from .text import has_wrong_designation_dash, tidy
 
 
+# Локальные цифровые носители: для них п. 5.8.3 требует не URL, а примечание
+# об источнике основного заглавия.
+_LOCAL_CARRIER_RE = re.compile(
+    r"CD-ROM|CD-R\b|DVD|Blu-?ray|флеш|флэш|flash|"
+    r"электрон\.?\s*опт\.?\s*диск|оптическ\w*\s+диск",
+    re.IGNORECASE)
+
+
+def _is_local_carrier(ref: Reference) -> bool:
+    haystack = " ".join((ref.material_designation, ref.note, ref.container_subtitle))
+    return bool(_LOCAL_CARRIER_RE.search(haystack))
+
+
 def _issue(level: str, code: str, message: str, fix: str = "") -> dict[str, str]:
     out = {"level": level, "code": code, "message": message}
     if fix:
@@ -45,10 +58,32 @@ def check_fields(ref: Reference, standard: str = "7.0.100") -> list[dict[str, st
                             "Указан URL, но вид содержания «непосредственный».",
                             "Либо medium=electronic, либо уберите URL."))
     if not ref.url and ref.medium == "electronic" and ref.type not in ("website", "webpage"):
-        found.append(_issue("error", "electronic-no-url",
-                            "Вид содержания «электронный», но URL отсутствует.",
-                            "Это та самая системная ошибка списков: «Текст : электронный» "
-                            "ставят печатным изданиям."))
+        # Обязанность привести URL висит не на маркере «электронный», а на
+        # сетевом способе распространения: ГОСТ Р 7.0.100-2018, п. 5.8.3 —
+        # «Для электронных ресурсов сетевого распространения обязательным
+        # является примечание об электронном адресе ресурса в сети Интернет и
+        # дате обращения». Для локальных носителей (CD-ROM, флеш-карта) тот же
+        # пункт требует другого: «обязательным является примечание об источнике
+        # основного заглавия». Поэтому развилка по признакам носителя.
+        if _is_local_carrier(ref):
+            pass  # локальный носитель — URL не предусмотрен
+        elif ref.doi:
+            found.append(_issue("error", "electronic-no-url",
+                                "Вид содержания «электронный» и указан DOI, то есть ресурс "
+                                "сетевой, но URL отсутствует. По ГОСТ Р 7.0.100-2018 п. 5.8.3 "
+                                "для электронных ресурсов сетевого распространения примечание "
+                                "об электронном адресе и дате обращения обязательно.",
+                                "Добавьте URL и дату обращения."))
+        else:
+            found.append(_issue("warning", "electronic-no-url",
+                                "Вид содержания «электронный», но URL отсутствует. Для сетевого "
+                                "ресурса URL и дата обращения обязательны "
+                                "(ГОСТ Р 7.0.100-2018, п. 5.8.3); если это локальный носитель — "
+                                "укажите носитель и источник основного заглавия. Сетевой "
+                                "характер по данным записи не подтверждён, поэтому замечание, "
+                                "а не ошибка.",
+                                "Либо добавьте URL и дату обращения, либо medium=print, либо "
+                                "опустите область вида содержания."))
 
     if ref.url and not ref.access_date and not ref.publication_date:
         found.append(_issue("warning", "no-access-date",

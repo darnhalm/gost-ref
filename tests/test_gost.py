@@ -238,10 +238,30 @@ def test_reformat_autofixes_medium():
 # --------------------------------------------------------------------------
 
 def test_validate_catches_electronic_on_print():
+    # Сетевой характер не подтверждён — предупреждение, а не ошибка:
+    # локальный носитель тоже «электронный», но URL для него не предусмотрен.
     report = g.validate(dict(type="book", title="Заглавие", city="Москва",
                              year="2020", medium="electronic"))
+    assert any(e["code"] == "electronic-no-url" for e in report["warnings"])
+    assert not any(e["code"] == "electronic-no-url" for e in report["errors"])
+
+
+def test_validate_electronic_no_url_with_doi_is_error():
+    # DOI подтверждает сетевой ресурс → п. 5.8.3 требует URL и дату обращения.
+    report = g.validate(dict(type="article", title="Заглавие", container="Журнал",
+                             year="2020", pages="5-9", medium="electronic",
+                             doi="10.1234/abcd"))
     assert not report["ok"]
     assert any(e["code"] == "electronic-no-url" for e in report["errors"])
+
+
+def test_validate_electronic_local_carrier_needs_no_url():
+    # CD-ROM: п. 5.8.3 требует примечания об источнике заглавия, а не URL.
+    report = g.validate(dict(type="book", title="Заглавие", city="Москва",
+                             year="2020", medium="electronic",
+                             material_designation="электрон. опт. диск (CD-ROM)"))
+    assert not any(e["code"] == "electronic-no-url"
+                   for e in report["errors"] + report["warnings"])
 
 
 def test_validate_catches_url_without_access_date():

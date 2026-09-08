@@ -737,12 +737,11 @@ def test_double_slash_typo_before_responsibility():
 
 
 # --------------------------------------------------------------------------
-# Область вида содержания факультативна
+# Настройка вывода области вида содержания
 # --------------------------------------------------------------------------
 
 def test_content_type_can_be_omitted():
-    """ГОСТ Р 7.0.100-2018 делит элементы на обязательные, условно обязательные
-    и факультативные; область вида содержания в обязательные не входит."""
+    """Проверка переключателя профиля, а не нормативной обязательности."""
     fields = dict(type="book", authors="Иванов И. И.", title="Заглавие",
                   city="Москва", publisher="Наука", year="2024", total_pages="240")
     with_area = g.format_reference(fields, "7.0.100", content_type=True)
@@ -756,7 +755,7 @@ def test_missing_content_type_is_a_note_not_an_error():
     fields = dict(type="book", authors="Иванов И. И.", title="Заглавие",
                   city="Москва", publisher="Наука", year="2024", total_pages="240")
     report = g.format_and_check(fields, "7.0.100", content_type=False)
-    assert report["ok"], "отсутствие факультативного элемента — не ошибка"
+    assert report["ok"], "профиль без области сохраняет уровень note"
     assert not any(e["code"] == "no-content-type" for e in report["errors"])
     assert any(n["code"] == "no-content-type" for n in report["notes"])
 
@@ -771,14 +770,14 @@ def test_medium_conflict_is_still_an_error():
 
 
 def test_content_type_is_off_by_default():
-    """Факультативный элемент не ставится, пока его не потребовали."""
+    """Область отключена в профиле проекта по умолчанию."""
     fields = dict(type="book", authors="Иванов И. И.", title="Заглавие",
                   city="Москва", publisher="Наука", year="2024", total_pages="240")
     assert "Текст :" not in g.format_reference(fields, "7.0.100")
 
 
 def test_area_dash_absence_is_only_a_note():
-    """П. 4.6.4 ГОСТ Р 7.0.100-2018 разрешает заменять «точку и тире» точкой."""
+    """Без оформления документа валидатор оставляет решение о 4.6.4 человеку."""
     from gost_ref.validate import check_string
     issues = check_string("Иванов, И. И. Заглавие. Москва : Наука, 2024. 240 с.", "7.0.100")
     dash = [i for i in issues if i["code"] == "no-area-dash"]

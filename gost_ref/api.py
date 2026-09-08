@@ -44,7 +44,7 @@ def format_reference(data: Any, standard: str = "7.0.100", nbsp: bool = False,
                      content_type: bool = False) -> str:
     """Собирает строку по одному стандарту.
 
-    content_type действует только для 7.0.100: False убирает факультативную
+    content_type действует только для 7.0.100: False отключает настраиваемую
     область вида содержания («Текст : непосредственный»), если совет или
     редакция её не требуют.
     """
@@ -57,10 +57,12 @@ def format_reference(data: Any, standard: str = "7.0.100", nbsp: bool = False,
     return apply_nbsp(out) if nbsp else out
 
 
-def format_all(data: Any, nbsp: bool = False) -> dict[str, str]:
+def format_all(data: Any, nbsp: bool = False,
+               content_type: bool = False) -> dict[str, str]:
     """Одни и те же данные во всех четырёх стандартах — удобно для сверки."""
     ref = data if isinstance(data, Reference) else Reference.from_dict(data)
-    return {key: format_reference(ref, key, nbsp=nbsp) for key in STANDARDS}
+    return {key: format_reference(ref, key, nbsp=nbsp, content_type=content_type)
+            for key in STANDARDS}
 
 
 def format_and_check(data: Any, standard: str = "7.0.100", nbsp: bool = False,
@@ -123,7 +125,8 @@ def format_pair(data: Any, record_standard: str = "7.0.100",
 # --------------------------------------------------------------------------
 
 def reformat(raw: str, standard: str = "7.0.100", nbsp: bool = False,
-             autofix: bool = True, type_override: str = "") -> dict[str, Any]:
+             autofix: bool = True, type_override: str = "",
+             content_type: bool = False) -> dict[str, Any]:
     """Кривая строка → разобранные поля → строка по стандарту + замечания.
 
     type_override — задать тип источника вручную, когда определитель ошибся.
@@ -158,7 +161,7 @@ def reformat(raw: str, standard: str = "7.0.100", nbsp: bool = False,
             ref.medium = "electronic"
             fixes.append("Вид содержания исправлен на «электронный»: в записи есть URL.")
     key = resolve_standard(standard)
-    rendered = STANDARDS[key].format(ref)
+    rendered = format_reference(ref, key, content_type=content_type)
     if nbsp:
         rendered = apply_nbsp(rendered)
     report = validate_ref(ref, standard=key, rendered=rendered)
@@ -198,7 +201,7 @@ def _sort_key(rendered: str) -> tuple[int, str]:
 
 def build_list(items: Iterable[Any], standard: str = "7.0.100",
                sort: str = "alpha", numbered: bool = True,
-               nbsp: bool = False) -> dict[str, Any]:
+               nbsp: bool = False, content_type: bool = False) -> dict[str, Any]:
     """Собирает список литературы целиком.
 
     sort: alpha — кириллица, затем латиница (обычное требование ВАК);
@@ -208,7 +211,7 @@ def build_list(items: Iterable[Any], standard: str = "7.0.100",
     entries: list[dict[str, Any]] = []
     for index, item in enumerate(items, start=1):
         ref = item if isinstance(item, Reference) else Reference.from_dict(item)
-        rendered = STANDARDS[key].format(ref)
+        rendered = format_reference(ref, key, content_type=content_type)
         if nbsp:
             rendered = apply_nbsp(rendered)
         report = validate_ref(ref, standard=key, rendered=rendered)

@@ -43,9 +43,8 @@ def main(argv=None) -> int:
     common.add_argument("--nbsp", action="store_true",
                         help="неразрывные пробелы для Word")
     common.add_argument("--content-type", dest="content_type", action="store_true",
-                        help="вывести «Текст : непосредственный». По ГОСТ Р "
-                             "7.0.100-2018 эта область факультативна, поэтому "
-                             "по умолчанию не выводится")
+                        help="вывести область вида содержания и средства доступа "
+                             "для 7.0.100; в профиле проекта она отключена")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("format", parents=[common], help="описание из JSON → строка")
@@ -91,16 +90,17 @@ def main(argv=None) -> int:
         _out(api.format_pair(_read_json(args.file), record_standard=args.record,
                              nbsp=args.nbsp, content_type=args.content_type))
     elif args.cmd == "all":
-        _out(api.format_all(_read_json(args.file), nbsp=args.nbsp))
+        _out(api.format_all(_read_json(args.file), nbsp=args.nbsp,
+                            content_type=args.content_type))
     elif args.cmd == "reformat":
         _out(api.reformat(args.text, args.standard, nbsp=args.nbsp,
-                          type_override=args.type_override))
+                          type_override=args.type_override, content_type=args.content_type))
     elif args.cmd == "parse":
         from .parse import parse
         _out(parse(args.text))
     elif args.cmd == "list":
         _out(api.build_list(_read_json(args.file), args.standard,
-                            sort=args.sort, nbsp=args.nbsp))
+                            sort=args.sort, nbsp=args.nbsp, content_type=args.content_type))
     elif args.cmd == "lookup":
         from . import lookup
         try:

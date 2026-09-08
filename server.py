@@ -85,10 +85,9 @@ def format_reference(fields: dict, standard: str = "7.0.100",
     standard — 7.0.5 | 7.0.100 | 7.1 | 7.0.108
     nbsp     — неразрывные пробелы в инициалах и после «С.», «№» (для Word)
     content_type — только для 7.0.100. Область вида содержания
-      («Текст : непосредственный») по стандарту ФАКУЛЬТАТИВНА: элементы
-      делятся на обязательные, условно обязательные и факультативные, и эта
-      область в обязательные не входит. Ставьте False, если совет или
-      редакция её не требуют.
+      («Текст : непосредственный») отключена в профиле проекта.
+      Вид содержания и средство доступа — условно-обязательные элементы
+      (4.4.2, 5.10.4, 5.10.8); включайте согласно требованиям описания.
 
     Возвращает готовую строку, разобранные поля и список замечаний.
     В ответе `type_label` — тип источника по-русски; покажите его пользователю
@@ -112,26 +111,27 @@ def format_footnote_and_record(fields: dict, record_standard: str = "7.0.100",
     Сноска всегда по 7.0.5-2008; для сетевого документа применяется
     уточняющий 7.0.108-2022.
 
-    content_type — область «Текст : непосредственный» в записи. По ГОСТ Р
-    7.0.100-2018 факультативна, поэтому по умолчанию не выводится.
+    content_type — вывод области «Текст : непосредственный» в записи.
+    По умолчанию отключён настройкой проекта, а не нормой о факультативности.
     """
     return _dump(api.format_pair(fields, record_standard=record_standard,
                                  nbsp=nbsp, content_type=content_type))
 
 
 @mcp.tool()
-def format_all_standards(fields: dict, nbsp: bool = False) -> str:
+def format_all_standards(fields: dict, nbsp: bool = False,
+                         content_type: bool = False) -> str:
     """Одни и те же данные во всех четырёх стандартах — для сверки и выбора."""
     return _dump({
         "names": _STANDARD_NAMES,
-        "results": api.format_all(fields, nbsp=nbsp),
+        "results": api.format_all(fields, nbsp=nbsp, content_type=content_type),
     })
 
 
 @mcp.tool()
 def reformat_reference(raw: str, standard: str = "7.0.100",
                        nbsp: bool = False, autofix: bool = True,
-                       type_override: str = "") -> str:
+                       type_override: str = "", content_type: bool = False) -> str:
     """Переоформить готовую (кривую) строку ссылки по стандарту.
 
     raw — ссылка «как есть» из текста. Разбор эвристический: всё, что не
@@ -147,7 +147,8 @@ def reformat_reference(raw: str, standard: str = "7.0.100",
     поправить тип.
     """
     return _dump(api.reformat(raw, standard=standard, nbsp=nbsp,
-                              autofix=autofix, type_override=type_override))
+                              autofix=autofix, type_override=type_override,
+                              content_type=content_type))
 
 
 @mcp.tool()
@@ -180,14 +181,14 @@ def validate_reference(fields: dict | None = None, rendered: str = "",
 @mcp.tool()
 def build_bibliography(items: list[dict], standard: str = "7.0.100",
                        sort: str = "alpha", numbered: bool = True,
-                       nbsp: bool = False) -> str:
+                       nbsp: bool = False, content_type: bool = False) -> str:
     """Собрать список литературы целиком.
 
     items — массив описаний. sort: alpha (кириллица, затем латиница) | none.
     Возвращает готовый текст списка и отчёт по каждой записи.
     """
     return _dump(api.build_list(items, standard=standard, sort=sort,
-                                numbered=numbered, nbsp=nbsp))
+                                numbered=numbered, nbsp=nbsp, content_type=content_type))
 
 
 @mcp.tool()
@@ -263,8 +264,8 @@ def read_pdf_metadata(path: str, head_pages: int = 3, tail_pages: int = 2) -> st
 def check_links(query: str) -> str:
     """Ссылки на базы без открытого API — РИНЦ, РГБ, НЭБ, фонд Росстандарта.
 
-    Для проверки статуса ГОСТа передайте его обозначение: отменённый стандарт
-    в списке литературы считается ошибкой.
+    Для проверки статуса ГОСТа передайте его обозначение.
+    Сопоставьте статус редакции с целью цитирования.
     """
     return _dump(lookup.manual_check_links(query))
 

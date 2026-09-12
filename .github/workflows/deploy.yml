@@ -54,7 +54,7 @@ jobs:
         id: login-cr
         uses: yc-actions/yc-cr-login@v3
         with:
-          yc-sa-id: ${{ secrets.YC_SA_ID }}
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
 
       - name: Сборка и публикация образа
         env:
@@ -68,7 +68,7 @@ jobs:
         id: deploy
         uses: yc-actions/yc-sls-container-deploy@v5
         with:
-          yc-sa-id: ${{ secrets.YC_SA_ID }}
+          yc-sa-json-credentials: ${{ secrets.YC_SA_JSON_CREDENTIALS }}
           folder-id: ${{ vars.YC_FOLDER_ID }}
           container-name: ${{ vars.YC_CONTAINER_NAME }}
           revision-service-account-id: ${{ vars.YC_REVISION_SA_ID }}

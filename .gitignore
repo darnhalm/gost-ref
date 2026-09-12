@@ -9,3 +9,4 @@ venv/
 
 # Результаты прогонов оценки — воспроизводятся скриптами из eval/
 eval/*result*.json
+Claude outputs/

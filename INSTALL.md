@@ -39,6 +39,27 @@ gost-ref pair < источник.json
 
 Путь должен быть полным. После правки конфига перезапустите приложение.
 
+## Удалённый сервер (HTTP)
+
+Тот же `server.py` умеет работать по HTTP — для этого он поднимает транспорт
+`streamable-http` MCP SDK вместо stdio. Ядро и набор инструментов те же:
+
+```bash
+GOST_REF_API_KEY=dev-secret python server.py --transport streamable-http --port 8080
+curl -s localhost:8080/health          # {"status":"ok","service":"gost-ref"}
+```
+
+Подключение клиента к уже развёрнутому серверу:
+
+```bash
+claude mcp add --transport http gost-ref https://<адрес>/mcp \
+  --header "Authorization: Bearer <GOST_REF_API_KEY>"
+```
+
+Docker, выкладка в Yandex Cloud Serverless Containers, обновление через GitHub
+Actions, полный список переменных окружения и что происходит с
+`read_pdf_metadata` в удалённом режиме — в `DEPLOY.md`.
+
 ## Навык
 
 `skill/SKILL.md` — инструкция для Claude: как определять тип источника, какие

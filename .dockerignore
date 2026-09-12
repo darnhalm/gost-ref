@@ -1,0 +1,40 @@
+# В образ идут только gost_ref, server.py, references, skill и requirements.
+# Всё остальное — балласт, который к тому же ломает кэш слоёв.
+
+.git
+.git*
+.github
+.githooks
+.gitignore
+
+# Оценочные корпуса и прогоны — сотни килобайт, серверу не нужны
+eval/
+scripts/
+tests/
+
+# Кеши и артефакты сборки
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.env
+.env.*
+
+# macOS
+._*
+**/._*
+.DS_Store
+**/.DS_Store
+
+# Документация установки — в образе не используется
+INSTALL.md
+DEPLOY.md
+Dockerfile
+.dockerignore

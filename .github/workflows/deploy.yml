@@ -1,0 +1,104 @@
+# Сборка образа и выкладка нового ревизии контейнера в Yandex Cloud
+# Serverless Containers. Деплой идёт только после зелёных тестов.
+#
+# Что нужно завести один раз (Settings → Secrets and variables → Actions):
+#
+#   vars.YC_FOLDER_ID        — идентификатор каталога (b1g...)
+#   vars.YC_REGISTRY_ID      — идентификатор Container Registry (crp...)
+#   vars.YC_CONTAINER_NAME   — имя контейнера, например gost-ref
+#   vars.YC_REVISION_SA_ID   — сервисный аккаунт, от имени которого работает
+#                              ревизия и тянется образ (роль
+#                              container-registry.images.puller)
+#   secrets.YC_SA_ID         — сервисный аккаунт для самого деплоя; связан с
+#                              GitHub через Workload Identity Federation,
+#                              долгоживущий ключ в репозитории не хранится
+#   vars.YC_LOCKBOX_SECRET_ID / vars.YC_LOCKBOX_VERSION_ID
+#                            — секрет Lockbox, в ключе api-key лежит значение
+#                              GOST_REF_API_KEY
+#
+# Токен доступа НЕ хранится ни в репозитории, ни в образе: он приезжает в
+# контейнер из Lockbox на старте ревизии.
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server.py'
+      - 'gost_ref/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-yc
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  deploy:
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write        # для обмена GitHub-токена на IAM-токен
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Логин в Yandex Container Registry
+        id: login-cr
+        uses: yc-actions/yc-cr-login@v3
+        with:
+          yc-sa-id: ${{ secrets.YC_SA_ID }}
+
+      - name: Сборка и публикация образа
+        env:
+          IMAGE: cr.yandex/${{ vars.YC_REGISTRY_ID }}/gost-ref
+        run: |
+          docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      - name: Выкладка ревизии контейнера
+        id: deploy
+        uses: yc-actions/yc-sls-container-deploy@v5
+        with:
+          yc-sa-id: ${{ secrets.YC_SA_ID }}
+          folder-id: ${{ vars.YC_FOLDER_ID }}
+          container-name: ${{ vars.YC_CONTAINER_NAME }}
+          revision-service-account-id: ${{ vars.YC_REVISION_SA_ID }}
+          revision-image-url: cr.yandex/${{ vars.YC_REGISTRY_ID }}/gost-ref:${{ github.sha }}
+          revision-cores: '1'
+          revision-memory: 512Mb
+          # Инструменты независимы друг от друга, состояние между запросами не
+          # хранится — один экземпляр спокойно обслуживает несколько клиентов.
+          revision-concurrency: '16'
+          # 3 секунды по умолчанию мало: lookup_metadata ходит во внешние базы.
+          revision-execution-timeout: '120'
+          # Контейнер открыт снаружи, доступ закрывает Bearer-токен самого
+          # сервера: MCP-клиенты не умеют присылать IAM-токен Яндекса.
+          public: true
+          revision-secrets: |
+            GOST_REF_API_KEY=${{ vars.YC_LOCKBOX_SECRET_ID }}/${{ vars.YC_LOCKBOX_VERSION_ID }}/api-key
+          revision-env: |
+            GOST_REF_TRANSPORT=streamable-http
+            GOST_REF_MCP_PATH=/mcp
+            GOST_REF_LOOKUP_TIMEOUT=10
+            GOST_REF_MAX_ITEMS=200
+
+      - name: Проверка живого эндпоинта
+        run: |
+          URL="https://${{ steps.deploy.outputs.id }}.containers.yandexcloud.net"
+          echo "MCP URL: $URL/mcp"
+          for i in $(seq 1 20); do
+            if curl -fsS "$URL/health" | grep -q '"status":"ok"'; then
+              echo "health ok"; exit 0
+            fi
+            sleep 3
+          done
+          echo "health не ответил"; exit 1

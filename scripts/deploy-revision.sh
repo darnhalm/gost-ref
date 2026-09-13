@@ -7,6 +7,12 @@
 # Образ собирает и пушит CI; выкладка делается отсюда, потому что у
 # сервисного аккаунта деплоя DeployRevision отвечает PERMISSION_DENIED при
 # всех выданных ролях, а причина пока не установлена. Ваших прав хватает.
+#
+# Служебный сервис метаданных для ревизии отключён. Через него изнутри
+# контейнера можно получить IAM-токен сервисного аккаунта ревизии — это
+# единственный путь, по которому дыра в коде сервера превратилась бы в
+# доступ к реестру и секрету. Серверу метаданные не нужны: токен приезжает
+# переменной окружения при выкладке, а в облачные API он не ходит.
 
 set -euo pipefail
 
@@ -50,6 +56,7 @@ yc serverless container revision deploy \
   --zone-instances-limit 2 \
   --zone-requests-limit 20 \
   --secret "environment-variable=GOST_REF_API_KEY,id=$SECRET_ID,version-id=$VERSION_ID,key=api-key" \
+  --metadata-options aws-v1-http-endpoint=disabled,gce-http-endpoint=disabled \
   --environment GOST_REF_TRANSPORT=streamable-http \
   --environment GOST_REF_MCP_PATH=/mcp \
   --environment GOST_REF_LOOKUP_TIMEOUT=10 \

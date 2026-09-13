@@ -34,11 +34,31 @@ print(next((e.get("text_value","") for e in d.get("entries") or [] if e.get("key
 printf '\nСервер: %s/mcp\n' "$URL"
 
 printf 'Проверяю health... '
-if curl -fsS -m 20 "$URL/health" | grep -q '"status":"ok"'; then
+if curl -fsS -m 30 "$URL/health" | grep -q '"status":"ok"'; then
   echo "отвечает"
 else
   echo "НЕ отвечает"
-  die "ревизия ещё не выложена. Actions → deploy → Run workflow, затем повторите."
+  die "ревизия ещё не выложена — см. DEPLOY.md, затем повторите."
+fi
+
+# Заголовок X-API-Key, а не Authorization: Yandex Serverless Containers
+# проверяет Authorization как свой IAM-токен и отвечает 403 раньше, чем
+# запрос дойдёт до контейнера. Сервер принимает оба, но здесь работает
+# только этот. На площадках, которые заголовок не трогают (Cloud Run,
+# Railway, Render), годится и привычный «Authorization: Bearer».
+HEADER="X-API-Key: $TOKEN"
+
+printf 'Проверяю MCP... '
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 60 -X POST "$URL/mcp" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "$HEADER" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')
+if [ "$CODE" = "200" ]; then
+  echo "отвечает"
+else
+  echo "код $CODE"
+  die "сервер не принял токен. Проверьте, что ревизия использует ту же версию секрета Lockbox."
 fi
 
 if ! command -v claude >/dev/null; then
@@ -47,16 +67,15 @@ if ! command -v claude >/dev/null; then
 Claude Code не найден. Команда для подключения вручную:
 
   claude mcp add --transport http $NAME --scope $SCOPE $URL/mcp \\
-    --header "Authorization: Bearer $TOKEN"
+    --header "$HEADER"
 
-Для других клиентов: тот же адрес и тот же заголовок Authorization.
+Для других клиентов: тот же адрес и тот же заголовок.
 MANUAL
   exit 0
 fi
 
 claude mcp remove "$NAME" --scope "$SCOPE" >/dev/null 2>&1 || true
-claude mcp add --transport http "$NAME" --scope "$SCOPE" "$URL/mcp" \
-  --header "Authorization: Bearer $TOKEN"
+claude mcp add --transport http "$NAME" --scope "$SCOPE" "$URL/mcp" --header "$HEADER"
 
 cat <<DONE
 

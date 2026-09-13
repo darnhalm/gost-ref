@@ -23,6 +23,23 @@ die() { printf '\nОшибка: %s\n' "$*" >&2; exit 1; }
 jget() { python3 -c 'import sys,json;d=json.load(sys.stdin);
 [d:=d.get(k,{}) for k in sys.argv[1].split(".")];print(d if isinstance(d,str) else "")' "$1"; }
 
+# Выдача роли. Повторная выдача — не ошибка, а вот всё остальное ошибка, и
+# молчать о ней нельзя: из-за проглоченного отказа однажды полдня ушло на
+# поиск несуществующей проблемы совсем в другом месте.
+GRANT_FAILED=0
+grant() {
+  local what=$1; shift
+  local out
+  if out=$("$@" 2>&1); then
+    return 0
+  fi
+  if printf '%s' "$out" | grep -qi "already exists\|уже существует"; then
+    return 0
+  fi
+  printf '  НЕ ВЫДАНО (%s): %s\n' "$what" "$(printf '%s' "$out" | tail -2)" >&2
+  GRANT_FAILED=1
+}
+
 command -v yc >/dev/null || die "не найден yc. Установка: https://yandex.cloud/ru/docs/cli/quickstart"
 command -v python3 >/dev/null || die "не найден python3 — он нужен для разбора ответов yc"
 
@@ -58,22 +75,32 @@ if ! yc iam service-account get --name "$SA" >/dev/null 2>&1; then
   yc iam service-account create --name "$SA" >/dev/null
 fi
 SA_ID=$(yc iam service-account get --name "$SA" --format json | jget id)
-yc container registry add-access-binding --id "$REGISTRY_ID" \
-  --role container-registry.images.puller --service-account-id "$SA_ID" >/dev/null 2>&1 || true
+grant "images.puller" yc container registry add-access-binding --id "$REGISTRY_ID" \
+  --role container-registry.images.puller --service-account-id "$SA_ID"
 echo "аккаунт ревизии: $SA_ID"
 
 # --------------------------------------------------------------------------
-# Сервисный аккаунт деплоя: пушить образ и выкладывать ревизии
+# Сервисный аккаунт деплоя: пушить образ и выкладывать ревизии.
+#
+# Роль выкладки называется serverless.containers.editor — через ТОЧКУ, как
+# и API `yandex.cloud.serverless.containers.v1.ContainerService`. Существует
+# и похожая serverless-containers.editor через дефис; Яндекс принимает оба
+# имени при выдаче, но DeployRevision разрешает только первое. Проверить
+# список реальных ролей: yc iam role list | grep containers
 # --------------------------------------------------------------------------
 if ! yc iam service-account get --name "$DEPLOYER" >/dev/null 2>&1; then
   say "Создаю сервисный аккаунт деплоя $DEPLOYER"
   yc iam service-account create --name "$DEPLOYER" >/dev/null
 fi
 DEPLOYER_ID=$(yc iam service-account get --name "$DEPLOYER" --format json | jget id)
-for role in container-registry.images.pusher serverless-containers.editor iam.serviceAccounts.user; do
-  yc resource-manager folder add-access-binding "$FOLDER_ID" \
-    --role "$role" --service-account-id "$DEPLOYER_ID" >/dev/null 2>&1 || true
+for role in container-registry.images.pusher serverless.containers.editor iam.serviceAccounts.user; do
+  grant "$role" yc resource-manager folder add-access-binding "$FOLDER_ID" \
+    --role "$role" --service-account-id "$DEPLOYER_ID"
 done
+# Ревизия работает от имени аккаунта ревизии, поэтому деплою нужно право
+# использовать именно его — отдельно от каталога.
+grant "serviceAccounts.user на $SA" yc iam service-account add-access-binding "$SA_ID" \
+  --role iam.serviceAccounts.user --service-account-id "$DEPLOYER_ID"
 echo "аккаунт деплоя: $DEPLOYER_ID"
 
 # --------------------------------------------------------------------------
@@ -92,17 +119,22 @@ fi
 SECRET_JSON=$(yc lockbox secret get --name "$SECRET" --format json)
 SECRET_ID=$(printf '%s' "$SECRET_JSON" | jget id)
 VERSION_ID=$(printf '%s' "$SECRET_JSON" | jget current_version.id)
-yc lockbox secret add-access-binding --id "$SECRET_ID" \
-  --role lockbox.payloadViewer --service-account-id "$SA_ID" >/dev/null 2>&1 || true
+grant "lockbox.payloadViewer" yc lockbox secret add-access-binding --id "$SECRET_ID" \
+  --role lockbox.payloadViewer --service-account-id "$SA_ID"
 echo "секрет: $SECRET_ID (версия $VERSION_ID)"
 
 # --------------------------------------------------------------------------
 # Публичный вызов. Доступ закрывает Bearer-токен самого сервера: приватный
 # контейнер требует IAM-токен в том же заголовке Authorization, а два разных
-# Bearer в одном запросе не уживаются.
+# токена в одном заголовке не уживаются.
 # --------------------------------------------------------------------------
 say "Открываю публичный вызов"
-yc serverless container allow-unauthenticated-invoke "$CONTAINER" >/dev/null 2>&1 || true
+grant "публичный вызов" yc serverless container allow-unauthenticated-invoke "$CONTAINER"
+
+if [ "$GRANT_FAILED" = "1" ]; then
+  printf '\n\033[1mВНИМАНИЕ: часть прав не выдана — см. строки «НЕ ВЫДАНО» выше.\033[0m\n'
+  printf 'Выкладка ревизии без них упадёт с PERMISSION_DENIED.\n'
+fi
 
 # --------------------------------------------------------------------------
 say "Готово. Значения для GitHub → Settings → Secrets and variables → Actions"
@@ -131,25 +163,23 @@ if [ -n "$NEW_KEY" ]; then
   $NEW_KEY
 
 Подключение клиента после первой выкладки:
-  claude mcp add --transport http gost-ref \\
+  claude mcp add --transport http gost-ref --scope user \\
     https://$CONTAINER_ID.containers.yandexcloud.net/mcp \\
-    --header "Authorization: Bearer $NEW_KEY"
+    --header "X-API-Key: $NEW_KEY"
+
+Заголовок именно X-API-Key: Yandex проверяет Authorization как свой
+IAM-токен и отвечает 403 раньше, чем запрос дойдёт до контейнера.
 KEY
 fi
 
 cat <<'NEXT'
 
 Осталось связать GitHub с аккаунтом деплоя, чтобы Actions получал IAM-токен
-без долгоживущего ключа: в консоли Yandex Cloud — Identity and Access
-Management → Federations → Workload Identity, федерация с issuer
-https://token.actions.githubusercontent.com, затем федеративный доступ для
-аккаунта деплоя с subject вида
+без долгоживущего ключа: ./scripts/yc-github-federation.sh
 
-  repo:<владелец>/gost-ref:ref:refs/heads/main
-
-Если этот путь окажется неудобным, есть простая замена: создать
-авторизованный ключ (yc iam key create --service-account-name gost-ref-deployer
---output key.json), положить его содержимое в секрет YC_SA_JSON_CREDENTIALS и
+Если федерация не заработает, есть простая замена: создать авторизованный
+ключ (yc iam key create --service-account-name gost-ref-deployer --output
+key.json), положить его содержимое в секрет YC_SA_JSON_CREDENTIALS и
 заменить в .github/workflows/deploy.yml обе строки yc-sa-id на
 yc-sa-json-credentials. Ключ долгоживущий — в репозиторий его не коммитить.
 

@@ -1,8 +1,6 @@
 name: tests
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
   workflow_call:      # вызывается из deploy.yml перед выкладкой

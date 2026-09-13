@@ -80,6 +80,10 @@ jobs:
           revision-concurrency: '16'
           # 3 секунды по умолчанию мало: lookup_metadata ходит во внешние базы.
           revision-execution-timeout: '120'
+          # Потолок расходов: разбудить контейнер может кто угодно,
+          # но выше этих значений счёт не вырастет.
+          revision-zone-instances-limit: '2'
+          revision-zone-requests-limit: '20'
           # Контейнер открыт снаружи, доступ закрывает Bearer-токен самого
           # сервера: MCP-клиенты не умеют присылать IAM-токен Яндекса.
           public: true

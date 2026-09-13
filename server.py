@@ -390,6 +390,11 @@ class BearerAuthMiddleware:
     Bearer совместим с клиентами, где заголовки задаются в конфигурации
     (Claude Code `--header`, mcp-remote). Клиентам, которым нужен OAuth,
     ставят внешний шлюз — см. README.
+
+    Принимается и `X-API-Key`. Это не украшение: Yandex Serverless Containers
+    перехватывает заголовок `Authorization` и проверяет его как свой IAM-токен,
+    отвечая 403 раньше, чем запрос дойдёт до контейнера. Там годится только
+    второй заголовок.
     """
 
     def __init__(self, app, token: str, exempt: tuple[str, ...] = ("/health",)):
@@ -454,6 +459,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--allow-anonymous", action="store_true",
                         default=os.environ.get("GOST_REF_ALLOW_ANONYMOUS", "") == "1",
                         help="разрешить HTTP без GOST_REF_API_KEY (только для разработки)")
+    parser.add_argument("--allowed-hosts",
+                        default=os.environ.get("GOST_REF_ALLOWED_HOSTS", ""),
+                        help="список хостов через запятую для защиты от DNS-rebinding; "
+                             "пусто — проверка Host отключена (в serverless имя хоста "
+                             "назначает платформа и заранее оно неизвестно)")
     parser.add_argument("--json-response", action="store_true",
                         default=os.environ.get("GOST_REF_JSON_RESPONSE", "") == "1",
                         help="отвечать обычным JSON вместо SSE-потока")
@@ -512,6 +522,20 @@ def main(argv: list[str] | None = None) -> int:
     mcp.settings.stateless_http = True
     mcp.settings.json_response = args.json_response
     mcp.settings.log_level = args.log_level
+
+    # Проверка заголовка Host защищает серверы на localhost от DNS-rebinding
+    # из браузера. В serverless имя хоста назначает платформа, и с пустым
+    # списком SDK отвечает «Invalid Host header» на любой внешний запрос.
+    # Здесь доступ закрывает токен, а TLS терминирует платформа, поэтому по
+    # умолчанию проверку выключаем; заданный список её включает обратно.
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    hosts = [h.strip() for h in args.allowed_hosts.split(",") if h.strip()]
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=bool(hosts),
+        allowed_hosts=hosts,
+        allowed_origins=hosts,
+    )
 
     app = mcp.streamable_http_app()
     if api_key:

@@ -181,6 +181,42 @@ def test_concurrent_independent_requests(server):
         assert year in line
 
 
+def test_foreign_host_header_accepted_by_default(server):
+    """Запрос с чужим Host проходит: имя хоста назначает платформа.
+
+    Проверка Host в MCP SDK защищает серверы на localhost от DNS-rebinding
+    из браузера. В serverless она отвечала «Invalid Host header» на каждый
+    внешний запрос, потому что список разрешённых хостов пуст. Включается
+    обратно переменной GOST_REF_ALLOWED_HOSTS.
+    """
+    response = httpx.post(
+        f"{server}/mcp",
+        headers={"Host": "example.containers.yandexcloud.net",
+                 "Authorization": f"Bearer {API_KEY}",
+                 "Content-Type": "application/json", "Accept": ACCEPT},
+        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+        timeout=30,
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_x_api_key_header_accepted(server):
+    """Второй заголовок — для площадок, где Authorization занят платформой.
+
+    Yandex Serverless Containers проверяет Authorization как свой IAM-токен
+    и отвечает 403 раньше контейнера, поэтому туда токен идёт в X-API-Key.
+    """
+    headers = {"X-API-Key": API_KEY, "Content-Type": "application/json",
+               "Accept": ACCEPT}
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    assert httpx.post(f"{server}/mcp", json=payload, headers=headers,
+                      timeout=30).status_code == 200
+
+    headers["X-API-Key"] = "wrong"
+    assert httpx.post(f"{server}/mcp", json=payload, headers=headers,
+                      timeout=30).status_code == 401
+
+
 def test_http_mode_refuses_to_start_without_key():
     """Публичный HTTP без GOST_REF_API_KEY не поднимается."""
     env = {k: v for k, v in os.environ.items()

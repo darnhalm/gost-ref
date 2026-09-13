@@ -170,8 +170,15 @@ yc iam workload-identity federation create \
 ```bash
 claude mcp add --transport http gost-ref \
   https://<container-id>.containers.yandexcloud.net/mcp \
-  --header "Authorization: Bearer <GOST_REF_API_KEY>"
+  --header "X-API-Key: <GOST_REF_API_KEY>"
 ```
+
+**Почему `X-API-Key`, а не `Authorization`.** Yandex Serverless Containers
+проверяет заголовок `Authorization` как свой IAM-токен и отвечает
+`403 Forbidden: Not authorized` раньше, чем запрос дойдёт до контейнера —
+даже когда контейнер публичный. Сервер принимает оба заголовка; на Яндексе
+работает только второй. На площадках, которые заголовок не трогают
+(Cloud Run, Railway, Render), годится привычный `Authorization: Bearer`.
 
 Клиенты, которые не дают задать заголовок (веб-интерфейс claude.ai для
 собственных коннекторов), требуют OAuth — для них перед сервером ставится
@@ -193,6 +200,7 @@ OAuth: увидев их, некоторые клиенты перестают �
 | `GOST_REF_PDF_MAX_BYTES` | 67108864 | потолок размера PDF |
 | `GOST_REF_LOOKUP_TIMEOUT` | 20 (в образе 10) | таймаут одного запроса к внешней базе |
 | `GOST_REF_MAX_ITEMS` | 0 (в образе 200) | потолок числа описаний в `build_bibliography`; 0 — без ограничения |
+| `GOST_REF_ALLOWED_HOSTS` | — | список хостов через запятую для защиты от DNS-rebinding; пусто — проверка `Host` отключена, иначе SDK отвечает «Invalid Host header» на каждый внешний запрос |
 | `GOST_REF_JSON_RESPONSE` | — | `1` — отвечать обычным JSON вместо SSE |
 | `GOST_REF_LOG_LEVEL` | INFO | уровень логов |
 

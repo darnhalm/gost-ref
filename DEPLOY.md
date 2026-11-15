@@ -173,6 +173,27 @@ yc iam workload-identity federation create \
 
 ## Личный Telegram-бот
 
+### Ручной запуск на macOS
+
+При настроенных `yc` и Keychain-записи `bot-token`:
+
+```bash
+TELEGRAM_ALLOWED_USER_IDS='<ваш числовой ID>' \
+./scripts/run-telegram-polling.sh
+```
+
+Скрипт удаляет webhook без удаления очереди, берёт Bot API token из
+macOS Keychain, API-ключ MCP из Keychain или Yandex Lockbox и запускает
+long polling. Бот работает, пока процесс запущен и Mac подключён к сети.
+Остановка — `Ctrl+C`.
+
+### Yandex Serverless Container
+
+> Важно: в проверенном регионе Yandex Serverless соединения с
+> Telegram завершаются `Connection timed out`. Контейнерный
+> сценарий сохранён для регионов, где Telegram API доступен, но не
+> должен использоваться вместе с long polling.
+
 Telegram-бот разворачивается отдельным контейнером `gost-ref-telegram` и
 обращается к основному `gost-ref` по `X-API-Key`. Ключ Anna ему не передаётся.
 Публичным является только webhook; запросы Telegram проверяются по

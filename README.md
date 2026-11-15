@@ -81,6 +81,8 @@ Docker, выкладка в serverless-контейнеры и переменн�
 его единственный источник — инструменты `search_catalog`, `get_catalog_record`
 и `format_footnote_and_record` защищённого `gost-ref`. Развёртывание —
 `scripts/yc-telegram-bot.sh`, подробности и переменные — в `DEPLOY.md`.
+Для ручного запуска на macOS без webhook используйте
+`scripts/run-telegram-polling.sh`.
 
 ### Инструменты
 

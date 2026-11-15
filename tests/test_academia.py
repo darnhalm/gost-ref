@@ -81,12 +81,29 @@ def test_search_extracts_generic_anchor_without_css_class(monkeypatch):
     }]
 
 
+def test_search_falls_back_to_yahoo_html(monkeypatch):
+    target = "https://www.academia.edu/49699327/Digital_heritage_in_digital_museums"
+    monkeypatch.setattr(academia, "_post_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_bing_html", lambda _query: "")
+    monkeypatch.setattr(
+        academia, "_get_yahoo_html",
+        lambda _query: f'<a href="{target}">Digital heritage in digital museums</a>',
+    )
+
+    result = academia.search("digital heritage", limit=1)
+
+    assert result["results"] == [{
+        "title": "Digital heritage in digital museums", "url": target,
+    }]
+
+
 def test_search_falls_back_to_reader_markdown(monkeypatch):
     target = "https://www.academia.edu/49699327/Digital_heritage_in_digital_museums"
     redirect = "https://duckduckgo.com/l/?uddg=" + target.replace(":", "%3A").replace("/", "%2F")
     markdown = f"## [(PDF) Digital heritage in digital museums | Academia]({redirect})"
     monkeypatch.setattr(academia, "_post_html", lambda _query: "")
     monkeypatch.setattr(academia, "_get_bing_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_yahoo_html", lambda _query: "")
     monkeypatch.setattr(academia, "_get_academia_reader_markdown", lambda _query: "")
     monkeypatch.setattr(academia, "_get_reader_markdown", lambda _query: markdown)
 
@@ -105,6 +122,7 @@ def test_search_uses_academia_reader_without_download_links(monkeypatch):
     """
     monkeypatch.setattr(academia, "_post_html", lambda _query: "")
     monkeypatch.setattr(academia, "_get_bing_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_yahoo_html", lambda _query: "")
     monkeypatch.setattr(
         academia, "_get_academia_reader_markdown", lambda _query: markdown,
     )

@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 MAX_QUERY_CHARS = 300
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 BING_URL = "https://www.bing.com/search"
+YAHOO_URL = "https://search.yahoo.com/search"
 READER_URL = "https://r.jina.ai/http://html.duckduckgo.com/html/"
 ACADEMIA_READER_URL = "https://r.jina.ai/https://www.academia.edu/search"
 
@@ -117,6 +118,18 @@ def _post_html(query: str) -> str:
 def _get_bing_html(query: str) -> str:
     url = BING_URL + "?" + urllib.parse.urlencode({
         "q": f"site:academia.edu/ {query}", "cc": "US", "setlang": "en-US",
+    })
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; gost-ref/1.1)"},
+    )
+    with urllib.request.urlopen(request, timeout=25) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def _get_yahoo_html(query: str) -> str:
+    url = YAHOO_URL + "?" + urllib.parse.urlencode({
+        "p": f"site:academia.edu/ {query}",
     })
     request = urllib.request.Request(
         url,
@@ -251,6 +264,19 @@ def search(query: str, limit: int = 5) -> dict:
         bing_parser = _BingParser()
         bing_parser.feed(bing_body)
         results = _collect(bing_parser.results + _embedded_results(bing_body), limit)
+    if not results:
+        try:
+            yahoo_body = _get_yahoo_html(query)
+            yahoo_raw = _embedded_results(yahoo_body)
+            diagnostics.append({
+                "provider": "yahoo",
+                "bytes": len(yahoo_body),
+                "links": len(yahoo_raw),
+            })
+        except (OSError, urllib.error.URLError) as exc:
+            yahoo_raw = []
+            diagnostics.append({"provider": "yahoo", "error": type(exc).__name__})
+        results = _collect(yahoo_raw, limit)
     if not results:
         try:
             academia_body = _get_academia_reader_markdown(query)

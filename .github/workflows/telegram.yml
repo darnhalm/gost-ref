@@ -5,9 +5,12 @@ on:
     branches: [main]
     paths:
       - telegram_bot.py
+      - academia_local.py
+      - telegram_polling.py
       - Dockerfile.telegram
       - requirements.telegram.txt
       - tests/test_telegram_bot.py
+      - tests/test_telegram_polling.py
       - .github/workflows/telegram.yml
   workflow_dispatch:
 

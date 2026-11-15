@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.telegram.txt ./
 RUN pip install --no-cache-dir -r requirements.telegram.txt
 
-COPY telegram_bot.py ./
+COPY telegram_bot.py academia_local.py ./
 
 RUN useradd --system --uid 10002 --create-home --home-dir /home/telegram telegram \
     && chown -R telegram:telegram /app \

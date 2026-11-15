@@ -7,9 +7,11 @@
 
 set -euo pipefail
 
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 CONTAINER=${CONTAINER:-gost-ref-telegram}
 REGISTRY=${REGISTRY:-gost-ref}
 SA=${SA:-gost-ref-telegram-sa}
+GATEWAY=${GATEWAY:-gost-ref-telegram}
 TOKEN_SECRET=${TOKEN_SECRET:-gost-ref-telegram}
 CONFIG_SECRET=${CONFIG_SECRET:-gost-ref-telegram-runtime}
 GOST_SECRET=${GOST_SECRET:-gost-ref-api-key}
@@ -192,6 +194,9 @@ fi
 say "Выкладываю $CONTAINER"
 yc serverless container revision deploy "${DEPLOY_ARGS[@]}" >/dev/null
 grant "публичный webhook" yc serverless container allow-unauthenticated-invoke "$CONTAINER"
+grant "API Gateway invoke" yc serverless container add-access-binding \
+  --id "$CONTAINER_ID" --role serverless-containers.containerInvoker \
+  --service-account-id "$SA_ID"
 
 printf 'Проверяю health... '
 HEALTH_OK=no
@@ -205,9 +210,37 @@ for _ in $(seq 1 12); do
 done
 [ "$HEALTH_OK" = yes ] || die "контейнер не ответил на health"
 
+GATEWAY_SPEC=$(mktemp)
+trap 'rm -f "$GATEWAY_SPEC"' EXIT
+sed -e "s/CONTAINER_ID_PLACEHOLDER/$CONTAINER_ID/g" \
+  -e "s/SERVICE_ACCOUNT_ID_PLACEHOLDER/$SA_ID/g" \
+  "$REPO_ROOT/deploy/telegram-gateway.yaml" >"$GATEWAY_SPEC"
+if yc serverless api-gateway get --name "$GATEWAY" >/dev/null 2>&1; then
+  yc serverless api-gateway update --name "$GATEWAY" --spec "$GATEWAY_SPEC" \
+    --execution-timeout 30s >/dev/null
+else
+  yc serverless api-gateway create --name "$GATEWAY" --spec "$GATEWAY_SPEC" \
+    --execution-timeout 30s >/dev/null
+fi
+GATEWAY_DOMAIN=$(yc serverless api-gateway get --name "$GATEWAY" --format json | jget domain)
+[ -n "$GATEWAY_DOMAIN" ] || die "API Gateway не вернул домен"
+WEBHOOK_URL="https://$GATEWAY_DOMAIN/telegram/webhook"
+
+printf 'Проверяю API Gateway... '
+GATEWAY_OK=no
+for _ in $(seq 1 12); do
+  if curl -fsS -m 20 "https://$GATEWAY_DOMAIN/health" 2>/dev/null | grep -q '"status":"ok"'; then
+    GATEWAY_OK=yes
+    echo "отвечает"
+    break
+  fi
+  sleep 5
+done
+[ "$GATEWAY_OK" = yes ] || die "API Gateway не ответил на health"
+
 WEBHOOK_RESPONSE=$(curl -fsS -m 30 -X POST \
   "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
-  --data-urlencode "url=$BOT_URL/telegram/webhook" \
+  --data-urlencode "url=$WEBHOOK_URL" \
   --data-urlencode "secret_token=$WEBHOOK_SECRET" \
   --data-urlencode 'allowed_updates=["message","callback_query"]')
 printf '%s' "$WEBHOOK_RESPONSE" | python3 -c \
@@ -216,7 +249,7 @@ printf '%s' "$WEBHOOK_RESPONSE" | python3 -c \
 unset BOT_TOKEN WEBHOOK_SECRET BOT_INFO TOKEN_PAYLOAD CONFIG_PAYLOAD GOST_PAYLOAD GOST_API_KEY CONFIG_GOST_KEY 2>/dev/null || true
 
 [ "$GRANT_FAILED" = 0 ] || die "часть прав не выдана — см. сообщения выше"
-printf '\nГотово: https://t.me/%s\nWebhook: %s/telegram/webhook\n' "$BOT_NAME" "$BOT_URL"
+printf '\nГотово: https://t.me/%s\nWebhook: %s\n' "$BOT_NAME" "$WEBHOOK_URL"
 if [ -z "$ALLOWED_IDS" ]; then
   cat <<'NEXT'
 

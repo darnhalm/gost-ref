@@ -193,7 +193,9 @@ TELEGRAM_ALLOWED_USER_IDS='<ваш числовой ID>' \
 ./scripts/yc-telegram-bot.sh
 ```
 
-Скрипт создаёт отдельные контейнер, runtime-аккаунт и два Lockbox-секрета.
+Скрипт создаёт отдельные контейнер, API Gateway, runtime-аккаунт и два
+Lockbox-секрета. Gateway синхронно проксирует webhook в контейнер и
+возвращает Telegram прямой Bot API-ответ.
 Секрет с Bot API token доступен только оператору деплоя. Runtime получает
 другой секрет: webhook-подпись, белый список и копию API-ключа основного MCP,
 но не Bot API token и не ключ Anna. Затем скрипт выкладывает ревизию и

@@ -1,0 +1,27 @@
+openapi: 3.0.0
+info:
+  title: gost-ref Telegram webhook
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      operationId: telegramHealth
+      responses:
+        "200":
+          description: Container health
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: CONTAINER_ID_PLACEHOLDER
+        service_account_id: SERVICE_ACCOUNT_ID_PLACEHOLDER
+  /telegram/webhook:
+    post:
+      operationId: telegramWebhook
+      responses:
+        "200":
+          description: Telegram Bot API direct response
+        "403":
+          description: Invalid webhook signature
+      x-yc-apigateway-integration:
+        type: serverless_containers
+        container_id: CONTAINER_ID_PLACEHOLDER
+        service_account_id: SERVICE_ACCOUNT_ID_PLACEHOLDER

@@ -14,12 +14,7 @@ from telegram_bot import Settings, create_app
 
 class FakeGateway:
     def __init__(self):
-        self.telegram_calls = []
         self.mcp_calls = []
-
-    async def telegram(self, method, payload):
-        self.telegram_calls.append((method, payload))
-        return {}
 
     async def mcp(self, name, arguments):
         self.mcp_calls.append((name, arguments))
@@ -62,7 +57,6 @@ class FakeGateway:
 @pytest.fixture()
 def bot():
     settings = Settings(
-        bot_token="123:test",
         webhook_secret="webhook-secret",
         gost_ref_url="https://protected.invalid",
         gost_ref_api_key="api-key",
@@ -95,7 +89,6 @@ def test_webhook_rejects_wrong_secret(bot):
     client, gateway = bot
     response = _post(client, _update(), secret="wrong")
     assert response.status_code == 403
-    assert gateway.telegram_calls == []
     assert gateway.mcp_calls == []
 
 
@@ -106,8 +99,8 @@ def test_search_uses_protected_catalog_and_builds_buttons(bot):
     assert gateway.mcp_calls == [(
         "search_catalog", {"query": "9780892362509", "page": 1, "limit": 5},
     )]
-    method, payload = gateway.telegram_calls[-1]
-    assert method == "sendMessage"
+    payload = response.json()
+    assert payload["method"] == "sendMessage"
     assert "Historical &amp; Philosophical Issues" in payload["text"]
     keyboard = payload["reply_markup"]["inline_keyboard"]
     assert keyboard[0][0]["callback_data"] == "d:isbndb:9780892362509"
@@ -125,12 +118,12 @@ def test_plain_text_is_a_search(bot):
 
 def test_unauthorized_user_can_only_get_own_id(bot):
     client, gateway = bot
-    _post(client, _update("/id", user_id=99, update_id=3))
-    assert "<code>99</code>" in gateway.telegram_calls[-1][1]["text"]
+    response = _post(client, _update("/id", user_id=99, update_id=3))
+    assert "<code>99</code>" in response.json()["text"]
     assert gateway.mcp_calls == []
 
-    _post(client, _update("secret title", user_id=99, update_id=4))
-    assert "Доступ к поиску закрыт" in gateway.telegram_calls[-1][1]["text"]
+    response = _post(client, _update("secret title", user_id=99, update_id=4))
+    assert "Доступ к поиску закрыт" in response.json()["text"]
     assert gateway.mcp_calls == []
 
 
@@ -145,11 +138,11 @@ def test_gost_callback_never_exposes_download_data(bot):
             "message": {"message_id": 8, "chat": {"id": 42}, "text": "details"},
         },
     }
-    _post(client, update)
+    response = _post(client, update)
     assert [name for name, _ in gateway.mcp_calls] == [
         "get_catalog_record", "format_footnote_and_record",
     ]
-    text = gateway.telegram_calls[-1][1]["text"]
+    text = response.json()["text"]
     assert "Сноска" in text and "Список литературы" in text
     assert "must-not-appear" not in text
 

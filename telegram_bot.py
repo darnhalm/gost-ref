@@ -17,6 +17,7 @@ import os
 import re
 import time
 from collections import OrderedDict, defaultdict, deque
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -39,7 +40,6 @@ class BotError(RuntimeError):
 
 @dataclass(frozen=True)
 class Settings:
-    bot_token: str
     webhook_secret: str
     gost_ref_url: str
     gost_ref_api_key: str
@@ -51,7 +51,6 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         required = {
-            "TELEGRAM_BOT_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(),
             "TELEGRAM_WEBHOOK_SECRET": os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip(),
             "GOST_REF_URL": os.environ.get("GOST_REF_URL", "").strip(),
             "GOST_REF_API_KEY": os.environ.get("GOST_REF_API_KEY", "").strip(),
@@ -78,7 +77,6 @@ class Settings:
         if urlparse(url).scheme not in {"http", "https"}:
             raise RuntimeError("GOST_REF_URL must be an HTTP(S) URL")
         return cls(
-            bot_token=required["TELEGRAM_BOT_TOKEN"],
             webhook_secret=required["TELEGRAM_WEBHOOK_SECRET"],
             gost_ref_url=url,
             gost_ref_api_key=required["GOST_REF_API_KEY"],
@@ -90,22 +88,10 @@ class Settings:
 
 
 class Gateway:
-    """HTTP boundary for Telegram and the protected MCP service."""
+    """HTTP boundary for the protected MCP service."""
 
     def __init__(self, settings: Settings):
         self.settings = settings
-
-    async def telegram(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
-        url = f"https://api.telegram.org/bot{self.settings.bot_token}/{method}"
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(url, json=payload)
-        if response.status_code >= 400:
-            raise RuntimeError(f"Telegram API returned HTTP {response.status_code}")
-        data = response.json()
-        if not data.get("ok"):
-            raise RuntimeError("Telegram API rejected the request")
-        result = data.get("result")
-        return result if isinstance(result, dict) else {"result": result}
 
     async def mcp(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         payload = {
@@ -203,7 +189,12 @@ class TelegramBot:
         self.settings = settings
         self.gateway = gateway or Gateway(settings)
         self.rate = RateLimiter(settings.rate_limit, settings.rate_window)
-        self.seen_updates: OrderedDict[int, None] = OrderedDict()
+        self.direct_reply: ContextVar[tuple[str, dict[str, Any]] | None] = ContextVar(
+            "telegram_direct_reply", default=None,
+        )
+        self.seen_updates: OrderedDict[
+            int, tuple[str, dict[str, Any]] | None
+        ] = OrderedDict()
 
     async def health(self, _request: Request) -> JSONResponse:
         return JSONResponse({
@@ -235,10 +226,8 @@ class TelegramBot:
         update_id = update.get("update_id")
         if isinstance(update_id, int):
             if update_id in self.seen_updates:
-                return PlainTextResponse("ok")
-            self.seen_updates[update_id] = None
-            while len(self.seen_updates) > 1000:
-                self.seen_updates.popitem(last=False)
+                return self._webhook_response(self.seen_updates[update_id])
+        reply_token = self.direct_reply.set(None)
         try:
             await self.process(update)
         except BotError as exc:
@@ -246,7 +235,24 @@ class TelegramBot:
         except Exception as exc:  # noqa: BLE001 — do not leak exception details
             LOGGER.error("update failed: %s", type(exc).__name__)
             await self._send_error(update, "Сервис временно недоступен. Попробуйте позже.")
-        return PlainTextResponse("ok")
+        reply = self.direct_reply.get()
+        self.direct_reply.reset(reply_token)
+        if isinstance(update_id, int):
+            self.seen_updates[update_id] = reply
+            while len(self.seen_updates) > 1000:
+                self.seen_updates.popitem(last=False)
+        return self._webhook_response(reply)
+
+    @staticmethod
+    def _webhook_response(reply: tuple[str, dict[str, Any]] | None):
+        if reply is None:
+            return PlainTextResponse("ok")
+        method, payload = reply
+        return JSONResponse({"method": method, **payload})
+
+    async def _emit(self, method: str, payload: dict[str, Any]) -> None:
+        """Ask Telegram to execute one Bot API method from the webhook response."""
+        self.direct_reply.set((method, payload))
 
     async def process(self, update: dict[str, Any]) -> None:
         callback = update.get("callback_query")
@@ -308,9 +314,6 @@ class TelegramBot:
             await self._search(chat_id, text, 1)
 
     async def _callback(self, callback: dict[str, Any]) -> None:
-        callback_id = callback.get("id")
-        if callback_id:
-            await self.gateway.telegram("answerCallbackQuery", {"callback_query_id": callback_id})
         data = str(callback.get("data") or "")
         message = callback.get("message") or {}
         chat_id = message.get("chat", {}).get("id")
@@ -383,9 +386,9 @@ class TelegramBot:
         payload = self._message_payload(chat_id, "\n".join(lines), keyboard)
         if edit_message_id is not None:
             payload["message_id"] = edit_message_id
-            await self.gateway.telegram("editMessageText", payload)
+            await self._emit("editMessageText", payload)
         else:
-            await self.gateway.telegram("sendMessage", payload)
+            await self._emit("sendMessage", payload)
 
     async def _details(self, chat_id: int, record_id: str) -> None:
         result = await self.gateway.mcp("get_catalog_record", {"record_id": record_id})
@@ -434,10 +437,7 @@ class TelegramBot:
     async def _send_error(self, update: dict[str, Any], text: str) -> None:
         chat_id = self._chat_id(update)
         if chat_id is not None:
-            try:
-                await self._send(chat_id, f"⚠️ {_escape(text)}")
-            except Exception:  # noqa: BLE001
-                LOGGER.error("could not send error response")
+            await self._send(chat_id, f"⚠️ {_escape(text)}")
 
     @staticmethod
     def _chat_id(update: dict[str, Any]) -> int | None:
@@ -480,9 +480,7 @@ class TelegramBot:
         self, chat_id: int, text: str,
         keyboard: list[list[dict[str, str]]] | None = None,
     ) -> None:
-        await self.gateway.telegram(
-            "sendMessage", self._message_payload(chat_id, text, keyboard),
-        )
+        await self._emit("sendMessage", self._message_payload(chat_id, text, keyboard))
 
 
 def create_app(settings: Settings | None = None, gateway: Gateway | None = None) -> Starlette:

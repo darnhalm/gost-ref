@@ -10,7 +10,8 @@ set -euo pipefail
 CONTAINER=${CONTAINER:-gost-ref-telegram}
 REGISTRY=${REGISTRY:-gost-ref}
 SA=${SA:-gost-ref-telegram-sa}
-BOT_SECRET=${BOT_SECRET:-gost-ref-telegram}
+TOKEN_SECRET=${TOKEN_SECRET:-gost-ref-telegram}
+CONFIG_SECRET=${CONFIG_SECRET:-gost-ref-telegram-runtime}
 GOST_SECRET=${GOST_SECRET:-gost-ref-api-key}
 GOST_CONTAINER=${GOST_CONTAINER:-gost-ref}
 TAG=${TAG:-latest}
@@ -67,25 +68,24 @@ GOST_API_KEY=$(printf '%s' "$GOST_PAYLOAD" | python3 -c \
 BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
 WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
 ALLOWED_IDS=${TELEGRAM_ALLOWED_USER_IDS:-}
-UPDATE_SECRET=no
+UPDATE_TOKEN=no
+UPDATE_CONFIG=no
 
-current_value() {
-  printf '%s' "$CURRENT_PAYLOAD" | python3 -c \
-    'import json,sys;key=sys.argv[1];print(next((x.get("text_value","") for x in json.load(sys.stdin).get("entries",[]) if x.get("key")==key),""))' "$1"
+payload_value() {
+  python3 -c 'import json,sys;key=sys.argv[1];print(next((x.get("text_value","") for x in json.load(sys.stdin).get("entries",[]) if x.get("key")==key),""))' "$1"
 }
 
-if yc lockbox secret get --name "$BOT_SECRET" >/dev/null 2>&1; then
-  CURRENT_PAYLOAD=$(yc lockbox payload get --name "$BOT_SECRET" --format json)
-  [ -n "$BOT_TOKEN" ] || BOT_TOKEN=$(current_value bot-token)
-  [ -n "$WEBHOOK_SECRET" ] || WEBHOOK_SECRET=$(current_value webhook-secret)
-  [ -n "$ALLOWED_IDS" ] || ALLOWED_IDS=$(current_value allowed-user-ids)
-  BOT_GOST_KEY=$(current_value gost-api-key)
-  if [ -n "${TELEGRAM_BOT_TOKEN:-}${TELEGRAM_WEBHOOK_SECRET:-}${TELEGRAM_ALLOWED_USER_IDS:-}" ]; then
-    UPDATE_SECRET=yes
-  fi
-  [ "$BOT_GOST_KEY" = "$GOST_API_KEY" ] || UPDATE_SECRET=yes
+if yc lockbox secret get --name "$TOKEN_SECRET" >/dev/null 2>&1; then
+  TOKEN_PAYLOAD=$(yc lockbox payload get --name "$TOKEN_SECRET" --format json)
+  [ -n "$BOT_TOKEN" ] || BOT_TOKEN=$(printf '%s' "$TOKEN_PAYLOAD" | payload_value bot-token)
+  [ -n "$WEBHOOK_SECRET" ] || WEBHOOK_SECRET=$(printf '%s' "$TOKEN_PAYLOAD" | payload_value webhook-secret)
+  [ -n "$ALLOWED_IDS" ] || ALLOWED_IDS=$(printf '%s' "$TOKEN_PAYLOAD" | payload_value allowed-user-ids)
+  TOKEN_KEYS=$(printf '%s' "$TOKEN_PAYLOAD" | python3 -c \
+    'import json,sys;print(",".join(sorted(x.get("key","") for x in json.load(sys.stdin).get("entries",[]))))')
+  [ "$TOKEN_KEYS" = "bot-token" ] || UPDATE_TOKEN=yes
+  [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || UPDATE_TOKEN=yes
 else
-  UPDATE_SECRET=yes
+  UPDATE_TOKEN=yes
 fi
 
 if [ -z "$BOT_TOKEN" ]; then
@@ -105,22 +105,59 @@ BOT_NAME=$(printf '%s' "$BOT_INFO" | python3 -c \
   'import json,sys;data=json.load(sys.stdin);data.get("ok") or sys.exit(1);print(data.get("result",{}).get("username",""))')
 [ -n "$BOT_NAME" ] || die "Telegram не вернул username бота"
 
-if [ "$UPDATE_SECRET" = yes ]; then
-  BOT_TOKEN="$BOT_TOKEN" WEBHOOK_SECRET="$WEBHOOK_SECRET" ALLOWED_IDS="$ALLOWED_IDS" GOST_API_KEY="$GOST_API_KEY" \
-    python3 -c 'import json,os,sys;entries=[{"key":"bot-token","text_value":os.environ["BOT_TOKEN"]},{"key":"webhook-secret","text_value":os.environ["WEBHOOK_SECRET"]},{"key":"gost-api-key","text_value":os.environ["GOST_API_KEY"]}];allowed=os.environ.get("ALLOWED_IDS","").strip();entries += ([{"key":"allowed-user-ids","text_value":allowed}] if allowed else []);json.dump(entries,sys.stdout)' \
-    | if yc lockbox secret get --name "$BOT_SECRET" >/dev/null 2>&1; then
-        yc lockbox secret add-version --name "$BOT_SECRET" \
-          --description 'update Telegram bot configuration' --payload - >/dev/null
+if [ "$UPDATE_TOKEN" = yes ]; then
+  BOT_TOKEN="$BOT_TOKEN" python3 -c \
+    'import json,os,sys;json.dump([{"key":"bot-token","text_value":os.environ["BOT_TOKEN"]}],sys.stdout)' \
+    | if yc lockbox secret get --name "$TOKEN_SECRET" >/dev/null 2>&1; then
+        yc lockbox secret add-version --name "$TOKEN_SECRET" \
+          --description 'isolate Telegram Bot API token' --payload - >/dev/null
       else
-        yc lockbox secret create --name "$BOT_SECRET" --payload - >/dev/null
+        yc lockbox secret create --name "$TOKEN_SECRET" --payload - >/dev/null
       fi
 fi
 
-BOT_SECRET_JSON=$(yc lockbox secret get --name "$BOT_SECRET" --format json)
-BOT_SECRET_ID=$(printf '%s' "$BOT_SECRET_JSON" | jget id)
-BOT_VERSION_ID=$(printf '%s' "$BOT_SECRET_JSON" | jget current_version.id)
-grant "Telegram secret" yc lockbox secret add-access-binding --id "$BOT_SECRET_ID" \
+current_config_value() {
+  printf '%s' "$CONFIG_PAYLOAD" | payload_value "$1"
+}
+if yc lockbox secret get --name "$CONFIG_SECRET" >/dev/null 2>&1; then
+  CONFIG_PAYLOAD=$(yc lockbox payload get --name "$CONFIG_SECRET" --format json)
+  [ -n "$WEBHOOK_SECRET" ] || WEBHOOK_SECRET=$(current_config_value webhook-secret)
+  [ -n "$ALLOWED_IDS" ] || ALLOWED_IDS=$(current_config_value allowed-user-ids)
+  CONFIG_GOST_KEY=$(current_config_value gost-api-key)
+  if [ -n "${TELEGRAM_WEBHOOK_SECRET:-}${TELEGRAM_ALLOWED_USER_IDS:-}" ]; then
+    UPDATE_CONFIG=yes
+  fi
+  [ "$CONFIG_GOST_KEY" = "$GOST_API_KEY" ] || UPDATE_CONFIG=yes
+else
+  UPDATE_CONFIG=yes
+fi
+[ -n "$WEBHOOK_SECRET" ] || WEBHOOK_SECRET=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')
+
+if [ "$UPDATE_CONFIG" = yes ]; then
+  WEBHOOK_SECRET="$WEBHOOK_SECRET" ALLOWED_IDS="$ALLOWED_IDS" GOST_API_KEY="$GOST_API_KEY" \
+    python3 -c 'import json,os,sys;entries=[{"key":"webhook-secret","text_value":os.environ["WEBHOOK_SECRET"]},{"key":"gost-api-key","text_value":os.environ["GOST_API_KEY"]}];allowed=os.environ.get("ALLOWED_IDS","").strip();entries += ([{"key":"allowed-user-ids","text_value":allowed}] if allowed else []);json.dump(entries,sys.stdout)' \
+    | if yc lockbox secret get --name "$CONFIG_SECRET" >/dev/null 2>&1; then
+        yc lockbox secret add-version --name "$CONFIG_SECRET" \
+          --description 'update Telegram runtime configuration' --payload - >/dev/null
+      else
+        yc lockbox secret create --name "$CONFIG_SECRET" --payload - >/dev/null
+      fi
+fi
+
+TOKEN_SECRET_ID=$(yc lockbox secret get --name "$TOKEN_SECRET" --format json | jget id)
+CONFIG_SECRET_JSON=$(yc lockbox secret get --name "$CONFIG_SECRET" --format json)
+CONFIG_SECRET_ID=$(printf '%s' "$CONFIG_SECRET_JSON" | jget id)
+CONFIG_VERSION_ID=$(printf '%s' "$CONFIG_SECRET_JSON" | jget current_version.id)
+grant "Telegram runtime configuration" yc lockbox secret add-access-binding --id "$CONFIG_SECRET_ID" \
   --role lockbox.payloadViewer --service-account-id "$SA_ID"
+
+# Runtime must never read the Bot API token secret. Remove a legacy binding
+# created by versions of this script that kept token and config together.
+if yc lockbox secret list-access-bindings --id "$TOKEN_SECRET_ID" --format json \
+  | python3 -c 'import json,sys;sid=sys.argv[1];raise SystemExit(0 if any(x.get("role_id")=="lockbox.payloadViewer" and x.get("subject",{}).get("id")==sid for x in json.load(sys.stdin)) else 1)' "$SA_ID"; then
+  yc lockbox secret remove-access-binding --id "$TOKEN_SECRET_ID" \
+    --role lockbox.payloadViewer --service-account-id "$SA_ID" >/dev/null
+fi
 
 DEPLOY_ARGS=(
   --container-name "$CONTAINER"
@@ -131,16 +168,15 @@ DEPLOY_ARGS=(
   --execution-timeout 120s
   --zone-instances-limit 1
   --zone-requests-limit 8
-  --secret "environment-variable=TELEGRAM_BOT_TOKEN,id=$BOT_SECRET_ID,version-id=$BOT_VERSION_ID,key=bot-token"
-  --secret "environment-variable=TELEGRAM_WEBHOOK_SECRET,id=$BOT_SECRET_ID,version-id=$BOT_VERSION_ID,key=webhook-secret"
-  --secret "environment-variable=GOST_REF_API_KEY,id=$BOT_SECRET_ID,version-id=$BOT_VERSION_ID,key=gost-api-key"
+  --secret "environment-variable=TELEGRAM_WEBHOOK_SECRET,id=$CONFIG_SECRET_ID,version-id=$CONFIG_VERSION_ID,key=webhook-secret"
+  --secret "environment-variable=GOST_REF_API_KEY,id=$CONFIG_SECRET_ID,version-id=$CONFIG_VERSION_ID,key=gost-api-key"
   --metadata-options aws-v1-http-endpoint=disabled,gce-http-endpoint=disabled
   --environment "GOST_REF_URL=$GOST_URL"
   --environment TELEGRAM_RATE_LIMIT=10
   --environment TELEGRAM_RATE_WINDOW=60
 )
 if [ -n "$ALLOWED_IDS" ]; then
-  DEPLOY_ARGS+=(--secret "environment-variable=TELEGRAM_ALLOWED_USER_IDS,id=$BOT_SECRET_ID,version-id=$BOT_VERSION_ID,key=allowed-user-ids")
+  DEPLOY_ARGS+=(--secret "environment-variable=TELEGRAM_ALLOWED_USER_IDS,id=$CONFIG_SECRET_ID,version-id=$CONFIG_VERSION_ID,key=allowed-user-ids")
 else
   DEPLOY_ARGS+=(--environment TELEGRAM_ALLOWED_USER_IDS=)
 fi
@@ -169,7 +205,7 @@ WEBHOOK_RESPONSE=$(curl -fsS -m 30 -X POST \
 printf '%s' "$WEBHOOK_RESPONSE" | python3 -c \
   'import json,sys;data=json.load(sys.stdin);data.get("ok") or sys.exit("Telegram rejected setWebhook");print("Telegram webhook: настроен")'
 
-unset BOT_TOKEN WEBHOOK_SECRET BOT_INFO CURRENT_PAYLOAD GOST_PAYLOAD GOST_API_KEY BOT_GOST_KEY 2>/dev/null || true
+unset BOT_TOKEN WEBHOOK_SECRET BOT_INFO TOKEN_PAYLOAD CONFIG_PAYLOAD GOST_PAYLOAD GOST_API_KEY CONFIG_GOST_KEY 2>/dev/null || true
 
 [ "$GRANT_FAILED" = 0 ] || die "часть прав не выдана — см. сообщения выше"
 printf '\nГотово: https://t.me/%s\nWebhook: %s/telegram/webhook\n' "$BOT_NAME" "$BOT_URL"

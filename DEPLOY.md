@@ -179,6 +179,10 @@ Telegram-бот разворачивается отдельным контейн
 `X-Telegram-Bot-Api-Secret-Token`, а поиск доступен только числовым user ID из
 белого списка.
 
+Ответ отправляется методом Bot API прямо в HTTP-ответе webhook. Поэтому
+runtime не соединяется с `api.telegram.org` исходящим запросом и вообще не
+получает Bot API token; токен нужен только скрипту при регистрации webhook.
+
 Образ собирает `.github/workflows/telegram.yml` из `Dockerfile.telegram` и
 публикует как `gost-ref-telegram:latest`. После создания бота через
 `@BotFather`:
@@ -189,11 +193,12 @@ TELEGRAM_ALLOWED_USER_IDS='<ваш числовой ID>' \
 ./scripts/yc-telegram-bot.sh
 ```
 
-Скрипт создаёт отдельные контейнер, runtime-аккаунт и Lockbox-секрет. В этот
-секрет копируется только API-ключ основного MCP, но не ключ Anna; runtime бота
-не получает прав на основной секрет. Затем скрипт выкладывает ревизию и
-регистрирует webhook в Telegram. Токены передаются в Lockbox через stdin и не
-попадают в репозиторий или образ.
+Скрипт создаёт отдельные контейнер, runtime-аккаунт и два Lockbox-секрета.
+Секрет с Bot API token доступен только оператору деплоя. Runtime получает
+другой секрет: webhook-подпись, белый список и копию API-ключа основного MCP,
+но не Bot API token и не ключ Anna. Затем скрипт выкладывает ревизию и
+регистрирует webhook в Telegram. Значения передаются через stdin и не попадают
+в репозиторий или образ.
 
 Если ID неизвестен, первый запуск можно сделать без
 `TELEGRAM_ALLOWED_USER_IDS`. Отправьте созданному боту `/id`, затем повторите
@@ -207,7 +212,7 @@ TELEGRAM_ALLOWED_USER_IDS='<ваш числовой ID>' \
 - `/id` — собственный Telegram ID;
 - кнопки «Подробнее», «ГОСТ», «Назад/Дальше».
 
-Переменные контейнера: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
+Переменные контейнера: `TELEGRAM_WEBHOOK_SECRET`,
 `TELEGRAM_ALLOWED_USER_IDS`, `GOST_REF_URL`, `GOST_REF_API_KEY`,
 `TELEGRAM_RATE_LIMIT` и `TELEGRAM_RATE_WINDOW`.
 

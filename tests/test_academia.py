@@ -132,6 +132,26 @@ def test_search_uses_academia_reader_without_download_links(monkeypatch):
     assert result["results"] == [{"title": "Glitch in the museum", "url": target}]
 
 
+def test_search_returns_safe_search_pages_when_providers_have_no_results(monkeypatch):
+    monkeypatch.setattr(academia, "_post_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_bing_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_yahoo_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_academia_reader_markdown", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_reader_markdown", lambda _query: "")
+
+    result = academia.search("museum digital heritage", limit=3)
+
+    assert result["status"] == "search-pages"
+    assert result["result_count"] == 0
+    assert [item["url"] for item in result["search_pages"]] == [
+        "https://www.academia.edu/search?q=museum+digital+heritage",
+        "https://www.google.com/search?q=site%3Aacademia.edu%2F+museum+digital+heritage",
+    ]
+    assert "download" not in " ".join(
+        item["url"] for item in result["search_pages"]
+    ).lower()
+
+
 @pytest.mark.parametrize("query,limit", [("", 5), ("x", 0), ("x", 11)])
 def test_search_rejects_invalid_arguments(query, limit):
     with pytest.raises(academia.AcademiaSearchError):

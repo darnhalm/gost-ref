@@ -321,5 +321,21 @@ def search(query: str, limit: int = 5) -> dict:
         ),
     }
     if not results:
-        response["diagnostics"] = diagnostics
+        encoded_query = urllib.parse.quote_plus(query)
+        site_query = urllib.parse.quote_plus(f"site:academia.edu/ {query}")
+        response["status"] = "search-pages"
+        response["search_pages"] = [
+            {
+                "title": "Поиск на Academia.edu",
+                "url": f"https://www.academia.edu/search?q={encoded_query}",
+            },
+            {
+                "title": "Веб-поиск только по Academia.edu",
+                "url": f"https://www.google.com/search?q={site_query}",
+            },
+        ]
+        response["notice"] = (
+            "Поисковики не отдали серверу отдельные результаты. Откройте одну "
+            "из страниц поиска; файлы и ссылки на скачивание не запрашивались."
+        )
     return response

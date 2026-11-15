@@ -1,0 +1,43 @@
+name: telegram-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - telegram_bot.py
+      - Dockerfile.telegram
+      - requirements.telegram.txt
+      - tests/test_telegram_bot.py
+      - .github/workflows/telegram.yml
+  workflow_dispatch:
+
+concurrency:
+  group: telegram-image-yc
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+
+  build:
+    needs: tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Логин в Yandex Container Registry
+        uses: yc-actions/yc-cr-login@v3
+        with:
+          yc-sa-id: ${{ secrets.YC_SA_ID }}
+
+      - name: Сборка и публикация Telegram-образа
+        env:
+          IMAGE: cr.yandex/${{ vars.YC_REGISTRY_ID }}/gost-ref-telegram
+        run: |
+          docker build -f Dockerfile.telegram \
+            -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"

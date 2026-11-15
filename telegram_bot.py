@@ -1,0 +1,511 @@
+#!/usr/bin/env python3
+"""Private Telegram interface for the protected gost-ref MCP service.
+
+The bot exposes catalog metadata and GOST formatting only.  It never receives
+the Anna provider key and has no download or file-hash commands: all catalog
+requests go through the authenticated gost-ref endpoint.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+import html
+import json
+import logging
+import os
+import re
+import time
+from collections import OrderedDict, defaultdict, deque
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlparse
+
+import httpx
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse
+from starlette.routing import Route
+
+LOGGER = logging.getLogger("gost-ref-telegram")
+MAX_UPDATE_BYTES = 1_048_576
+MAX_QUERY_CHARS = 300
+MAX_MESSAGE_CHARS = 4000
+
+
+class BotError(RuntimeError):
+    """A safe, user-facing problem with a request."""
+
+
+@dataclass(frozen=True)
+class Settings:
+    bot_token: str
+    webhook_secret: str
+    gost_ref_url: str
+    gost_ref_api_key: str
+    allowed_user_ids: frozenset[int]
+    request_timeout: float = 75.0
+    rate_limit: int = 10
+    rate_window: int = 60
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        required = {
+            "TELEGRAM_BOT_TOKEN": os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(),
+            "TELEGRAM_WEBHOOK_SECRET": os.environ.get("TELEGRAM_WEBHOOK_SECRET", "").strip(),
+            "GOST_REF_URL": os.environ.get("GOST_REF_URL", "").strip(),
+            "GOST_REF_API_KEY": os.environ.get("GOST_REF_API_KEY", "").strip(),
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise RuntimeError(f"missing required environment: {', '.join(missing)}")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", required["TELEGRAM_WEBHOOK_SECRET"]):
+            raise RuntimeError(
+                "TELEGRAM_WEBHOOK_SECRET must contain only A-Z, a-z, 0-9, _ and -"
+            )
+
+        raw_ids = os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").strip()
+        try:
+            allowed = frozenset(
+                int(value.strip()) for value in raw_ids.split(",") if value.strip()
+            )
+        except ValueError as exc:
+            raise RuntimeError("TELEGRAM_ALLOWED_USER_IDS must contain integers") from exc
+        if any(value <= 0 for value in allowed):
+            raise RuntimeError("Telegram user IDs must be positive integers")
+
+        url = required["GOST_REF_URL"].rstrip("/")
+        if urlparse(url).scheme not in {"http", "https"}:
+            raise RuntimeError("GOST_REF_URL must be an HTTP(S) URL")
+        return cls(
+            bot_token=required["TELEGRAM_BOT_TOKEN"],
+            webhook_secret=required["TELEGRAM_WEBHOOK_SECRET"],
+            gost_ref_url=url,
+            gost_ref_api_key=required["GOST_REF_API_KEY"],
+            allowed_user_ids=allowed,
+            request_timeout=float(os.environ.get("TELEGRAM_REQUEST_TIMEOUT", "75")),
+            rate_limit=int(os.environ.get("TELEGRAM_RATE_LIMIT", "10")),
+            rate_window=int(os.environ.get("TELEGRAM_RATE_WINDOW", "60")),
+        )
+
+
+class Gateway:
+    """HTTP boundary for Telegram and the protected MCP service."""
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
+    async def telegram(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        url = f"https://api.telegram.org/bot{self.settings.bot_token}/{method}"
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(url, json=payload)
+        if response.status_code >= 400:
+            raise RuntimeError(f"Telegram API returned HTTP {response.status_code}")
+        data = response.json()
+        if not data.get("ok"):
+            raise RuntimeError("Telegram API rejected the request")
+        result = data.get("result")
+        return result if isinstance(result, dict) else {"result": result}
+
+    async def mcp(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "X-API-Key": self.settings.gost_ref_api_key,
+        }
+        async with httpx.AsyncClient(timeout=self.settings.request_timeout) as client:
+            response = await client.post(
+                f"{self.settings.gost_ref_url}/mcp", json=payload, headers=headers,
+            )
+        if response.status_code != 200:
+            raise RuntimeError(f"gost-ref returned HTTP {response.status_code}")
+
+        body = response.text
+        if body.lstrip().startswith("event:") or "\ndata:" in body:
+            body = next(
+                (line[5:] for line in body.splitlines() if line.startswith("data:")),
+                "",
+            )
+        rpc = json.loads(body)
+        if rpc.get("error"):
+            raise RuntimeError("gost-ref returned an MCP error")
+        content = rpc.get("result", {}).get("content", [])
+        if not content or not isinstance(content[0].get("text"), str):
+            raise RuntimeError("gost-ref returned no text result")
+        result = json.loads(content[0]["text"])
+        if not isinstance(result, dict):
+            raise RuntimeError("gost-ref returned a non-object result")
+        if result.get("error"):
+            raise BotError("Каталожный сервис временно не дал результат. Попробуйте позже.")
+        return result
+
+
+class RateLimiter:
+    def __init__(self, limit: int, window: int):
+        self.limit = max(1, limit)
+        self.window = max(1, window)
+        self.events: dict[int, deque[float]] = defaultdict(deque)
+        self.lock = asyncio.Lock()
+
+    async def allow(self, user_id: int) -> bool:
+        now = time.monotonic()
+        async with self.lock:
+            events = self.events[user_id]
+            while events and events[0] <= now - self.window:
+                events.popleft()
+            if len(events) >= self.limit:
+                return False
+            events.append(now)
+            return True
+
+
+def _escape(value: Any) -> str:
+    return html.escape(str(value or ""), quote=True)
+
+
+def _display(value: Any) -> str:
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value if item)
+    return str(value or "")
+
+
+def _short(value: Any, limit: int = 240) -> str:
+    text = " ".join(_display(value).split())
+    return text if len(text) <= limit else f"{text[:limit - 1]}…"
+
+
+def _safe_url(value: Any) -> str:
+    url = str(value or "").strip()
+    parsed = urlparse(url)
+    return url if parsed.scheme in {"http", "https"} and parsed.netloc else ""
+
+
+def _callback(prefix: str, value: str) -> str:
+    data = f"{prefix}:{value}"
+    return data if len(data.encode("utf-8")) <= 64 else ""
+
+
+def _query_from_search_message(message: dict[str, Any]) -> str:
+    text = str(message.get("text") or "")
+    first = text.splitlines()[0] if text else ""
+    marker = "🔎 Поиск: "
+    return first[len(marker):].strip() if first.startswith(marker) else ""
+
+
+class TelegramBot:
+    def __init__(self, settings: Settings, gateway: Gateway | None = None):
+        self.settings = settings
+        self.gateway = gateway or Gateway(settings)
+        self.rate = RateLimiter(settings.rate_limit, settings.rate_window)
+        self.seen_updates: OrderedDict[int, None] = OrderedDict()
+
+    async def health(self, _request: Request) -> JSONResponse:
+        return JSONResponse({
+            "status": "ok",
+            "service": "gost-ref-telegram",
+            "allowlist_configured": bool(self.settings.allowed_user_ids),
+        })
+
+    async def webhook(self, request: Request):
+        supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not hmac.compare_digest(supplied, self.settings.webhook_secret):
+            return PlainTextResponse("forbidden", status_code=403)
+        try:
+            length = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            return PlainTextResponse("bad content length", status_code=400)
+        if length > MAX_UPDATE_BYTES:
+            return PlainTextResponse("too large", status_code=413)
+        body = await request.body()
+        if len(body) > MAX_UPDATE_BYTES:
+            return PlainTextResponse("too large", status_code=413)
+        try:
+            update = json.loads(body)
+        except json.JSONDecodeError:
+            return PlainTextResponse("bad json", status_code=400)
+        if not isinstance(update, dict):
+            return PlainTextResponse("bad update", status_code=400)
+
+        update_id = update.get("update_id")
+        if isinstance(update_id, int):
+            if update_id in self.seen_updates:
+                return PlainTextResponse("ok")
+            self.seen_updates[update_id] = None
+            while len(self.seen_updates) > 1000:
+                self.seen_updates.popitem(last=False)
+        try:
+            await self.process(update)
+        except BotError as exc:
+            await self._send_error(update, str(exc))
+        except Exception as exc:  # noqa: BLE001 — do not leak exception details
+            LOGGER.error("update failed: %s", type(exc).__name__)
+            await self._send_error(update, "Сервис временно недоступен. Попробуйте позже.")
+        return PlainTextResponse("ok")
+
+    async def process(self, update: dict[str, Any]) -> None:
+        callback = update.get("callback_query")
+        message = update.get("message")
+        source = callback if isinstance(callback, dict) else message
+        if not isinstance(source, dict):
+            return
+        sender = source.get("from") or {}
+        user_id = sender.get("id")
+        if not isinstance(user_id, int):
+            return
+
+        if isinstance(message, dict):
+            text = str(message.get("text") or "").strip()
+            if self._command(text)[0] == "/id":
+                await self._send(message["chat"]["id"], f"Ваш Telegram ID: <code>{user_id}</code>")
+                return
+
+        if user_id not in self.settings.allowed_user_ids:
+            chat_id = self._chat_id(update)
+            if chat_id is not None:
+                await self._send(
+                    chat_id,
+                    "Доступ к поиску закрыт. Отправьте <code>/id</code> владельцу бота.",
+                )
+            return
+        if not await self.rate.allow(user_id):
+            raise BotError("Слишком много запросов. Подождите минуту.")
+
+        if isinstance(callback, dict):
+            await self._callback(callback)
+        elif isinstance(message, dict):
+            await self._message(message)
+
+    @staticmethod
+    def _command(text: str) -> tuple[str, str]:
+        if not text.startswith("/"):
+            return "", text
+        head, _, tail = text.partition(" ")
+        return head.split("@", 1)[0].lower(), tail.strip()
+
+    async def _message(self, message: dict[str, Any]) -> None:
+        chat_id = message["chat"]["id"]
+        text = str(message.get("text") or "").strip()
+        command, value = self._command(text)
+        if command in {"/start", "/help"}:
+            await self._send(chat_id, self._help())
+        elif command == "/search":
+            if not value:
+                raise BotError("Использование: /search название, автор или ISBN")
+            await self._search(chat_id, value, 1)
+        elif command == "/book":
+            if not value:
+                raise BotError("Использование: /book catalog:id")
+            await self._details(chat_id, value)
+        elif command:
+            raise BotError("Неизвестная команда. Используйте /help.")
+        elif text:
+            await self._search(chat_id, text, 1)
+
+    async def _callback(self, callback: dict[str, Any]) -> None:
+        callback_id = callback.get("id")
+        if callback_id:
+            await self.gateway.telegram("answerCallbackQuery", {"callback_query_id": callback_id})
+        data = str(callback.get("data") or "")
+        message = callback.get("message") or {}
+        chat_id = message.get("chat", {}).get("id")
+        if chat_id is None:
+            return
+        prefix, _, value = data.partition(":")
+        if prefix == "p" and value.isdigit():
+            query = _query_from_search_message(message)
+            if not query:
+                raise BotError("Не удалось восстановить запрос. Отправьте его ещё раз.")
+            await self._search(
+                chat_id, query, int(value),
+                edit_message_id=message.get("message_id"),
+            )
+        elif prefix == "d" and value:
+            await self._details(chat_id, value)
+        elif prefix == "g" and value:
+            await self._gost(chat_id, value)
+
+    async def _search(
+        self, chat_id: int, query: str, page: int,
+        *, edit_message_id: int | None = None,
+    ) -> None:
+        query = " ".join(query.split())
+        if not query or len(query) > MAX_QUERY_CHARS:
+            raise BotError(f"Запрос должен содержать от 1 до {MAX_QUERY_CHARS} символов.")
+        result = await self.gateway.mcp(
+            "search_catalog", {"query": query, "page": page, "limit": 5},
+        )
+        items = result.get("results") or []
+        lines = [f"🔎 Поиск: {_escape(query)}", f"Найдено: {_escape(result.get('total', 0))}"]
+        keyboard: list[list[dict[str, str]]] = []
+        if not items:
+            lines.append("\nСовпадений не найдено.")
+        for index, item in enumerate(items, 1):
+            fields = item.get("fields") or {}
+            title = _short(fields.get("title"), 180) or "Без заглавия"
+            authors = _short(fields.get("authors"), 200)
+            details = ", ".join(
+                value for value in (
+                    _short(fields.get("publisher"), 120),
+                    _short(fields.get("year"), 30),
+                    _short(fields.get("edition"), 120),
+                ) if value
+            )
+            lines.append(f"\n<b>{index}. {_escape(title)}</b>")
+            if authors:
+                lines.append(_escape(authors))
+            if details:
+                lines.append(_escape(details))
+            record_id = str(item.get("id") or "")
+            detail_data = _callback("d", record_id)
+            gost_data = _callback("g", record_id)
+            row = []
+            if detail_data:
+                row.append({"text": f"{index}. Подробнее", "callback_data": detail_data})
+            if gost_data:
+                row.append({"text": f"{index}. ГОСТ", "callback_data": gost_data})
+            if row:
+                keyboard.append(row)
+
+        pages = []
+        if page > 1:
+            pages.append({"text": "← Назад", "callback_data": f"p:{page - 1}"})
+        if result.get("more_pages"):
+            pages.append({"text": "Дальше →", "callback_data": f"p:{page + 1}"})
+        if pages:
+            keyboard.append(pages)
+        lines.append("\n<i>Это кандидаты. Перед цитированием сверьте карточку издания.</i>")
+        payload = self._message_payload(chat_id, "\n".join(lines), keyboard)
+        if edit_message_id is not None:
+            payload["message_id"] = edit_message_id
+            await self.gateway.telegram("editMessageText", payload)
+        else:
+            await self.gateway.telegram("sendMessage", payload)
+
+    async def _details(self, chat_id: int, record_id: str) -> None:
+        result = await self.gateway.mcp("get_catalog_record", {"record_id": record_id})
+        fields = result.get("fields") or {}
+        identifiers = result.get("identifiers") or {}
+        lines = [f"📚 <b>{_escape(_short(fields.get('title'), 300) or 'Без заглавия')}</b>"]
+        for label, key in (
+            ("Авторы", "authors"), ("Издательство", "publisher"),
+            ("Год", "year"), ("Издание", "edition"), ("Язык", "language"),
+            ("ISBN", "isbn"),
+        ):
+            value = _short(fields.get(key), 400)
+            if value:
+                lines.append(f"<b>{label}:</b> {_escape(value)}")
+        extra_ids = []
+        for key, values in identifiers.items():
+            value = _short(values, 200)
+            if value and key not in {"isbn10", "isbn13"}:
+                extra_ids.append(f"{key}: {value}")
+        if extra_ids:
+            lines.append(f"<b>Идентификаторы:</b> {_escape('; '.join(extra_ids))}")
+        url = _safe_url(result.get("record_url"))
+        if url:
+            lines.append(f'<a href="{_escape(url)}">Карточка-кандидат</a> — требует проверки')
+        lines.append(f"<b>ID:</b> <code>{_escape(result.get('id') or record_id)}</code>")
+        gost_data = _callback("g", str(result.get("id") or record_id))
+        keyboard = [[{"text": "Оформить по ГОСТ", "callback_data": gost_data}]] if gost_data else []
+        await self._send(chat_id, "\n".join(lines), keyboard)
+
+    async def _gost(self, chat_id: int, record_id: str) -> None:
+        record = await self.gateway.mcp("get_catalog_record", {"record_id": record_id})
+        pair = await self.gateway.mcp(
+            "format_footnote_and_record", {"fields": record.get("fields") or {}},
+        )
+        footnote = _short((pair.get("footnote") or {}).get("text") or "—", 1700)
+        bibliography = _short((pair.get("record") or {}).get("text") or "—", 1700)
+        text = (
+            "📝 <b>Сноска</b>\n"
+            f"{_escape(footnote)}\n\n"
+            "📖 <b>Список литературы</b>\n"
+            f"{_escape(bibliography)}\n\n"
+            "<i>Проверьте карточку издания перед использованием.</i>"
+        )
+        await self._send(chat_id, text)
+
+    async def _send_error(self, update: dict[str, Any], text: str) -> None:
+        chat_id = self._chat_id(update)
+        if chat_id is not None:
+            try:
+                await self._send(chat_id, f"⚠️ {_escape(text)}")
+            except Exception:  # noqa: BLE001
+                LOGGER.error("could not send error response")
+
+    @staticmethod
+    def _chat_id(update: dict[str, Any]) -> int | None:
+        message = update.get("message")
+        if not isinstance(message, dict):
+            message = (update.get("callback_query") or {}).get("message")
+        chat_id = (message or {}).get("chat", {}).get("id")
+        return chat_id if isinstance(chat_id, int) else None
+
+    @staticmethod
+    def _help() -> str:
+        return (
+            "<b>Поиск библиографических данных</b>\n\n"
+            "Отправьте название, автора или ISBN обычным сообщением либо:\n"
+            "<code>/search запрос</code> — найти издания\n"
+            "<code>/book catalog:id</code> — открыть запись\n"
+            "<code>/id</code> — показать ваш Telegram ID\n\n"
+            "Бот ищет метаданные и оформляет ГОСТ. Файлы книг он не скачивает."
+        )
+
+    @staticmethod
+    def _message_payload(
+        chat_id: int, text: str, keyboard: list[list[dict[str, str]]] | None = None,
+    ) -> dict[str, Any]:
+        if len(text) > MAX_MESSAGE_CHARS:
+            cutoff = text.rfind("\n", 0, MAX_MESSAGE_CHARS - 40)
+            text = text[:cutoff if cutoff > 0 else MAX_MESSAGE_CHARS - 40]
+            text += "\n<i>Сообщение сокращено.</i>"
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        }
+        if keyboard:
+            payload["reply_markup"] = {"inline_keyboard": keyboard}
+        return payload
+
+    async def _send(
+        self, chat_id: int, text: str,
+        keyboard: list[list[dict[str, str]]] | None = None,
+    ) -> None:
+        await self.gateway.telegram(
+            "sendMessage", self._message_payload(chat_id, text, keyboard),
+        )
+
+
+def create_app(settings: Settings | None = None, gateway: Gateway | None = None) -> Starlette:
+    bot = TelegramBot(settings or Settings.from_env(), gateway=gateway)
+    app = Starlette(routes=[
+        Route("/health", bot.health, methods=["GET"]),
+        Route("/telegram/webhook", bot.webhook, methods=["POST"]),
+    ])
+    app.state.bot = bot
+    return app
+
+
+def main() -> None:
+    import uvicorn
+
+    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
+    uvicorn.run(
+        create_app(),
+        host=os.environ.get("HOST", "0.0.0.0"),
+        port=int(os.environ.get("PORT", "8080")),
+        log_level=os.environ.get("LOG_LEVEL", "info").lower(),
+    )
+
+
+if __name__ == "__main__":
+    main()

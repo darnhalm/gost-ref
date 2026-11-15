@@ -10,6 +10,9 @@ cd ~/gost-ref
 python3 -m pytest tests/ -q          # должно быть 186 passed
 ```
 
+С зависимостями Telegram-контейнера — `192 passed`, после полной установки
+`.[dev]` вместе с MCP smoke-тестами — `201 passed`.
+
 Проверка без установки:
 
 ```bash

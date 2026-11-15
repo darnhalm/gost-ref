@@ -1,4 +1,5 @@
-# В образ идут только gost_ref, server.py, references, skill и requirements.
+# В основной образ идут gost_ref, server.py, references, skill и requirements;
+# в Telegram-образ — telegram_bot.py и requirements.telegram.txt.
 # Всё остальное — балласт, который к тому же ломает кэш слоёв.
 
 .git

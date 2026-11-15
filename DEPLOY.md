@@ -171,6 +171,46 @@ yc iam workload-identity federation create \
 `YC_CONTAINER_NAME`, `YC_REVISION_SA_ID`, `YC_LOCKBOX_SECRET_ID`,
 `YC_LOCKBOX_VERSION_ID`. Секрет (`secrets`): `YC_SA_ID`.
 
+## Личный Telegram-бот
+
+Telegram-бот разворачивается отдельным контейнером `gost-ref-telegram` и
+обращается к основному `gost-ref` по `X-API-Key`. Ключ Anna ему не передаётся.
+Публичным является только webhook; запросы Telegram проверяются по
+`X-Telegram-Bot-Api-Secret-Token`, а поиск доступен только числовым user ID из
+белого списка.
+
+Образ собирает `.github/workflows/telegram.yml` из `Dockerfile.telegram` и
+публикует как `gost-ref-telegram:latest`. После создания бота через
+`@BotFather`:
+
+```bash
+TELEGRAM_BOT_TOKEN='<токен BotFather>' \
+TELEGRAM_ALLOWED_USER_IDS='<ваш числовой ID>' \
+./scripts/yc-telegram-bot.sh
+```
+
+Скрипт создаёт отдельные контейнер, runtime-аккаунт и Lockbox-секрет. В этот
+секрет копируется только API-ключ основного MCP, но не ключ Anna; runtime бота
+не получает прав на основной секрет. Затем скрипт выкладывает ревизию и
+регистрирует webhook в Telegram. Токены передаются в Lockbox через stdin и не
+попадают в репозиторий или образ.
+
+Если ID неизвестен, первый запуск можно сделать без
+`TELEGRAM_ALLOWED_USER_IDS`. Отправьте созданному боту `/id`, затем повторите
+команду с показанным числом. Пока белый список пуст, `/id` работает, а поиск
+закрыт.
+
+Команды бота:
+
+- обычный текст или `/search <название, автор, ISBN>` — поиск;
+- `/book <catalog:id>` — подробная запись;
+- `/id` — собственный Telegram ID;
+- кнопки «Подробнее», «ГОСТ», «Назад/Дальше».
+
+Переменные контейнера: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
+`TELEGRAM_ALLOWED_USER_IDS`, `GOST_REF_URL`, `GOST_REF_API_KEY`,
+`TELEGRAM_RATE_LIMIT` и `TELEGRAM_RATE_WINDOW`.
+
 ## Тот же образ на других платформах
 
 Образ ничем к Яндексу не привязан: слушает `$PORT` на `0.0.0.0`, читает

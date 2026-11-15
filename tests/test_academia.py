@@ -57,6 +57,7 @@ def test_search_falls_back_to_reader_markdown(monkeypatch):
     markdown = f"## [(PDF) Digital heritage in digital museums | Academia]({redirect})"
     monkeypatch.setattr(academia, "_post_html", lambda _query: "")
     monkeypatch.setattr(academia, "_get_bing_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_academia_reader_markdown", lambda _query: "")
     monkeypatch.setattr(academia, "_get_reader_markdown", lambda _query: markdown)
 
     result = academia.search("digital heritage", limit=1)
@@ -64,6 +65,23 @@ def test_search_falls_back_to_reader_markdown(monkeypatch):
     assert result["results"] == [{
         "title": "Digital heritage in digital museums", "url": target,
     }]
+
+
+def test_search_uses_academia_reader_without_download_links(monkeypatch):
+    target = "https://www.academia.edu/34749961/Glitch_in_the_museum"
+    markdown = f"""
+    [Glitch in the museum]({target}?sm=b)
+    [](https://www.academia.edu/attachments/54608380/download_file?ct=secret)
+    """
+    monkeypatch.setattr(academia, "_post_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_bing_html", lambda _query: "")
+    monkeypatch.setattr(
+        academia, "_get_academia_reader_markdown", lambda _query: markdown,
+    )
+
+    result = academia.search("museum", limit=5)
+
+    assert result["results"] == [{"title": "Glitch in the museum", "url": target}]
 
 
 @pytest.mark.parametrize("query,limit", [("", 5), ("x", 0), ("x", 11)])

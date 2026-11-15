@@ -15,6 +15,7 @@ MAX_QUERY_CHARS = 300
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 BING_URL = "https://www.bing.com/search"
 READER_URL = "https://r.jina.ai/http://html.duckduckgo.com/html/"
+ACADEMIA_READER_URL = "https://r.jina.ai/https://www.academia.edu/search"
 
 
 class AcademiaSearchError(RuntimeError):
@@ -137,11 +138,32 @@ def _get_reader_markdown(query: str) -> str:
         return response.read().decode("utf-8", "replace")
 
 
+def _get_academia_reader_markdown(query: str) -> str:
+    url = ACADEMIA_READER_URL + "?" + urllib.parse.urlencode({"q": query})
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; gost-ref/1.1)"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read().decode("utf-8", "replace")
+
+
 def _markdown_results(body: str) -> list[tuple[str, str]]:
     return [
         (href, title)
         for title, href in re.findall(
             r"\[([^\]\n]{4,500})\]\((https://duckduckgo\.com/l/\?uddg=[^)\s]+)\)",
+            body,
+            flags=re.I,
+        )
+    ]
+
+
+def _academia_markdown_results(body: str) -> list[tuple[str, str]]:
+    return [
+        (href, title)
+        for title, href in re.findall(
+            r"\[([^\]\n]{4,500})\]\((https://www\.academia\.edu/[^)\s]+)\)",
             body,
             flags=re.I,
         )
@@ -195,6 +217,12 @@ def search(query: str, limit: int = 5) -> dict:
         bing_parser = _BingParser()
         bing_parser.feed(bing_body)
         results = _collect(bing_parser.results, limit)
+    if not results:
+        try:
+            academia_body = _get_academia_reader_markdown(query)
+        except (OSError, urllib.error.URLError):
+            academia_body = ""
+        results = _collect(_academia_markdown_results(academia_body), limit)
     if not results:
         try:
             reader_body = _get_reader_markdown(query)

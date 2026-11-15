@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import html
 import re
 import urllib.error
@@ -12,6 +13,7 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 
 MAX_QUERY_CHARS = 300
 SEARCH_URL = "https://html.duckduckgo.com/html/"
+BING_URL = "https://www.bing.com/search"
 
 
 class AcademiaSearchError(RuntimeError):
@@ -42,12 +44,52 @@ class _ResultParser(HTMLParser):
             self._text = []
 
 
+class _BingParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.results: list[tuple[str, str]] = []
+        self._in_heading = False
+        self._href = ""
+        self._text: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        if tag == "h2":
+            self._in_heading = True
+        elif tag == "a" and self._in_heading:
+            self._href = values.get("href") or ""
+            self._text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._href:
+            self._text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._href:
+            self.results.append((self._href, " ".join(self._text)))
+            self._href = ""
+            self._text = []
+        elif tag == "h2":
+            self._in_heading = False
+
+
 def _document_url(value: str) -> str:
     value = html.unescape(str(value or "").strip())
     parsed = urlparse(value)
     if "uddg=" in value:
         value = (parse_qs(parsed.query).get("uddg") or [value])[0]
         parsed = urlparse(value)
+    if (parsed.hostname or "").lower().endswith("bing.com"):
+        encoded = (parse_qs(parsed.query).get("u") or [""])[0]
+        if encoded.startswith("a1"):
+            encoded = encoded[2:]
+        if encoded:
+            try:
+                padding = "=" * (-len(encoded) % 4)
+                value = base64.urlsafe_b64decode(encoded + padding).decode("utf-8")
+                parsed = urlparse(value)
+            except (ValueError, UnicodeDecodeError):
+                return ""
     if parsed.scheme != "https" or (parsed.hostname or "").lower() not in {
         "academia.edu", "www.academia.edu",
     }:
@@ -70,6 +112,37 @@ def _post_html(query: str) -> str:
         return response.read().decode("utf-8", "replace")
 
 
+def _get_bing_html(query: str) -> str:
+    url = BING_URL + "?" + urllib.parse.urlencode({
+        "q": f"site:academia.edu/ {query}", "cc": "US", "setlang": "en-US",
+    })
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; gost-ref/1.1)"},
+    )
+    with urllib.request.urlopen(request, timeout=25) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def _collect(raw_results: list[tuple[str, str]], limit: int) -> list[dict[str, str]]:
+    results: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for href, raw_title in raw_results:
+        url = _document_url(href)
+        if not url or url in seen:
+            continue
+        title = html.unescape(" ".join(raw_title.split()))
+        title = re.sub(r"^\(PDF\)\s*", "", title, flags=re.I)
+        title = re.sub(r"\s*[|–-]\s*Academia(?:\.edu)?\s*$", "", title, flags=re.I)
+        if not title:
+            title = urlparse(url).path.rsplit("/", 1)[-1].replace("_", " ")
+        results.append({"title": title[:400], "url": url})
+        seen.add(url)
+        if len(results) >= limit:
+            break
+    return results
+
+
 def search(query: str, limit: int = 5) -> dict:
     """Return document-page candidates and never download document content."""
     query = " ".join(str(query or "").split())
@@ -89,21 +162,15 @@ def search(query: str, limit: int = 5) -> dict:
 
     parser = _ResultParser()
     parser.feed(body)
-    results: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for href, raw_title in parser.results:
-        url = _document_url(href)
-        if not url or url in seen:
-            continue
-        title = html.unescape(" ".join(raw_title.split()))
-        title = re.sub(r"^\(PDF\)\s*", "", title, flags=re.I)
-        title = re.sub(r"\s*[|–-]\s*Academia(?:\.edu)?\s*$", "", title, flags=re.I)
-        if not title:
-            title = urlparse(url).path.rsplit("/", 1)[-1].replace("_", " ")
-        results.append({"title": title[:400], "url": url})
-        seen.add(url)
-        if len(results) >= limit:
-            break
+    results = _collect(parser.results, limit)
+    if not results:
+        try:
+            bing_body = _get_bing_html(query)
+        except (OSError, urllib.error.URLError):
+            bing_body = ""
+        bing_parser = _BingParser()
+        bing_parser.feed(bing_body)
+        results = _collect(bing_parser.results, limit)
     return {
         "query": query,
         "results": results,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+
 import pytest
 
 from gost_ref import academia
@@ -32,6 +34,21 @@ def test_search_returns_only_unique_document_pages(monkeypatch):
     }]
     assert result["status"] == "candidates"
     assert "не скачивались" in result["notice"]
+
+
+def test_search_falls_back_to_bing_and_decodes_redirect(monkeypatch):
+    target = "https://www.academia.edu/73525568/Digital_heritage"
+    encoded = base64.urlsafe_b64encode(target.encode()).decode().rstrip("=")
+    bing_html = (
+        '<li class="b_algo"><h2><a href="https://www.bing.com/ck/a?u=a1'
+        + encoded + '">(PDF) Digital heritage | Academia</a></h2></li>'
+    )
+    monkeypatch.setattr(academia, "_post_html", lambda _query: "<html></html>")
+    monkeypatch.setattr(academia, "_get_bing_html", lambda _query: bing_html)
+
+    result = academia.search("digital heritage", limit=1)
+
+    assert result["results"] == [{"title": "Digital heritage", "url": target}]
 
 
 @pytest.mark.parametrize("query,limit", [("", 5), ("x", 0), ("x", 11)])

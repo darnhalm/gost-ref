@@ -5,8 +5,7 @@ import pytest
 from gost_ref import academia
 
 
-class FakeResponse:
-    text = """
+SEARCH_HTML = """
     <a class="result__a" href="https://www.academia.edu/49699327/Digital_heritage">
       (PDF) Digital heritage | Academia.edu
     </a>
@@ -15,22 +14,18 @@ class FakeResponse:
     <a class="result__a" href="https://www.academia.edu/49699327/Digital_heritage">Duplicate</a>
     """
 
-    @staticmethod
-    def raise_for_status():
-        return None
-
 
 def test_search_returns_only_unique_document_pages(monkeypatch):
     captured = {}
 
-    def fake_post(url, **kwargs):
-        captured.update({"url": url, **kwargs})
-        return FakeResponse()
+    def fake_post(query):
+        captured["query"] = query
+        return SEARCH_HTML
 
-    monkeypatch.setattr(academia.httpx, "post", fake_post)
+    monkeypatch.setattr(academia, "_post_html", fake_post)
     result = academia.search("digital heritage", limit=5)
 
-    assert captured["data"]["q"] == "site:academia.edu/ digital heritage"
+    assert captured["query"] == "digital heritage"
     assert result["results"] == [{
         "title": "Digital heritage",
         "url": "https://www.academia.edu/49699327/Digital_heritage",

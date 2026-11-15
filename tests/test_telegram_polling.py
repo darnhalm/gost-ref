@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("httpx")
+pytest.importorskip("starlette")
+
 from telegram_bot import Settings, TelegramBot
 from telegram_polling import PollingRunner
 from test_telegram_bot import FakeGateway, _update

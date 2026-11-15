@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import html
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlparse, urlunparse
-
-import httpx
 
 MAX_QUERY_CHARS = 300
 SEARCH_URL = "https://html.duckduckgo.com/html/"
@@ -58,6 +59,17 @@ def _document_url(value: str) -> str:
     )
 
 
+def _post_html(query: str) -> str:
+    data = urllib.parse.urlencode({"q": f"site:academia.edu/ {query}"}).encode()
+    request = urllib.request.Request(
+        SEARCH_URL,
+        data=data,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; gost-ref/1.1)"},
+    )
+    with urllib.request.urlopen(request, timeout=25) as response:
+        return response.read().decode("utf-8", "replace")
+
+
 def search(query: str, limit: int = 5) -> dict:
     """Return document-page candidates and never download document content."""
     query = " ".join(str(query or "").split())
@@ -71,19 +83,12 @@ def search(query: str, limit: int = 5) -> dict:
         raise AcademiaSearchError("limit must be between 1 and 10")
 
     try:
-        response = httpx.post(
-            SEARCH_URL,
-            data={"q": f"site:academia.edu/ {query}"},
-            headers={"User-Agent": "Mozilla/5.0 (compatible; gost-ref/1.1)"},
-            timeout=25,
-            follow_redirects=True,
-        )
-        response.raise_for_status()
-    except httpx.HTTPError as exc:
+        body = _post_html(query)
+    except (OSError, urllib.error.URLError) as exc:
         raise AcademiaSearchError("web search provider unavailable") from exc
 
     parser = _ResultParser()
-    parser.feed(response.text)
+    parser.feed(body)
     results: list[dict[str, str]] = []
     seen: set[str] = set()
     for href, raw_title in parser.results:

@@ -7,7 +7,7 @@
 ```bash
 git clone https://github.com/darnhalm/gost-ref.git ~/gost-ref
 cd ~/gost-ref
-python3 -m pytest tests/ -q          # должно быть 180 passed
+python3 -m pytest tests/ -q          # должно быть 186 passed
 ```
 
 Проверка без установки:
@@ -46,7 +46,7 @@ gost-ref pair < источник.json
 
 ```bash
 GOST_REF_API_KEY=dev-secret python server.py --transport streamable-http --port 8080
-curl -s localhost:8080/health          # {"status":"ok","service":"gost-ref"}
+curl -s localhost:8080/health          # в ответе есть version и catalog_client
 ```
 
 Подключение клиента к уже развёрнутому серверу:
@@ -59,6 +59,10 @@ claude mcp add --transport http gost-ref https://<адрес>/mcp \
 Docker, выкладка в Yandex Cloud Serverless Containers, обновление через GitHub
 Actions, полный список переменных окружения и что происходит с
 `read_pdf_metadata` в удалённом режиме — в `DEPLOY.md`.
+
+`search_catalog` и `get_catalog_record` локально требуют `annas-mcp 0.8.2`
+и `ANNAS_SECRET_KEY`. Docker-образ уже содержит проверенный бинарник; в локальной
+среде укажите его путь через `ANNAS_MCP_PATH`, если он не лежит в PATH.
 
 ## Навык
 

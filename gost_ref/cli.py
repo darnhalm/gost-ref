@@ -8,6 +8,8 @@
     gost-ref reformat --standard 7.0.5 "Иванов И.И. Заглавие. М., 2020. 100 с."
     gost-ref pdf ~/книга.pdf
     gost-ref lookup 10.5406/ethnomusicology.58.3.0379
+    gost-ref catalog-search 9780892362509 --limit 5
+    gost-ref catalog-record isbndb:9780892362509
     gost-ref list --standard 7.0.100 < sources.json
 """
 
@@ -78,6 +80,20 @@ def main(argv=None) -> int:
     p.add_argument("query")
     p.add_argument("--kind", default="auto", choices=["auto", "doi", "isbn", "title"])
 
+    p = sub.add_parser("catalog-search", help="издания в библиотечных каталогах")
+    p.add_argument("query")
+    p.add_argument("--title", default="")
+    p.add_argument("--author", default="")
+    p.add_argument("--publisher", default="")
+    p.add_argument("--year", default="")
+    p.add_argument("--language", default="")
+    p.add_argument("--source", default="")
+    p.add_argument("--page", type=int, default=1)
+    p.add_argument("--limit", type=int, default=5)
+
+    p = sub.add_parser("catalog-record", help="подробности каталожной записи")
+    p.add_argument("record_id")
+
     p = sub.add_parser("pdf", parents=[common], help="выходные данные из PDF")
     p.add_argument("path")
 
@@ -107,6 +123,25 @@ def main(argv=None) -> int:
             _out(lookup.enrich(args.query, kind=args.kind))
         except lookup.LookupError as exc:
             _out({"error": str(exc), "manual_checks": lookup.manual_check_links(args.query)})
+            return 1
+    elif args.cmd == "catalog-search":
+        from . import catalog
+        try:
+            _out(catalog.search(
+                args.query, title=args.title, author=args.author,
+                publisher=args.publisher, year=args.year,
+                language=args.language, source=args.source,
+                page=args.page, limit=args.limit,
+            ))
+        except catalog.CatalogError as exc:
+            _out({"error": str(exc), "provider": "Anna's Archive metadata catalogs"})
+            return 1
+    elif args.cmd == "catalog-record":
+        from . import catalog
+        try:
+            _out(catalog.record(args.record_id))
+        except catalog.CatalogError as exc:
+            _out({"error": str(exc), "provider": "Anna's Archive metadata catalogs"})
             return 1
     elif args.cmd == "pdf":
         from . import pdfmeta

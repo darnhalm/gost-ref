@@ -29,7 +29,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from gost_ref import api, lookup, pdfmeta
+from gost_ref import __version__, api, catalog, lookup, pdfmeta
 from gost_ref.model import SOURCE_TYPES, Reference
 from gost_ref.text import today
 
@@ -333,6 +333,53 @@ async def lookup_metadata(query: str, kind: str = "auto") -> str:
 
 
 @mcp.tool()
+async def search_catalog(query: str, title: str = "", author: str = "",
+                         publisher: str = "", year: str = "",
+                         language: str = "", source: str = "",
+                         page: int = 1, limit: int = 5) -> str:
+    """Найти книжные издания в библиотечных каталогах через Anna metadata.
+
+    Возвращает кандидатов из Open Library, WorldCat, ISBNdb, Google Books и
+    других каталогов: id, заглавие, авторов, издательство, издание, язык, год
+    и record_url. Это поиск метаданных, не файлов; скачивание не выполняется.
+
+    record_url и идентификаторы — подсказки для проверки. Перед выдачей URL,
+    DOI или ISBN пользователю откройте выбранную карточку и сверьте автора и
+    заглавие. Для подробностей выбранной записи вызовите get_catalog_record.
+    """
+    try:
+        return _dump(await _offload(
+            catalog.search, query, title=title, author=author,
+            publisher=publisher, year=year, language=language, source=source,
+            page=page, limit=limit,
+        ))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({
+            "error": f"{type(exc).__name__}: {exc}",
+            "provider": "Anna's Archive metadata catalogs",
+            "hint": "проверьте ANNAS_SECRET_KEY, ANNAS_MCP_PATH и доступность провайдера",
+        })
+
+
+@mcp.tool()
+async def get_catalog_record(record_id: str) -> str:
+    """Подробные библиографические поля выбранной каталожной записи.
+
+    record_id берётся из search_catalog, например isbndb:978... или ol:OL....
+    Возвращает нормализованные fields, все найденные идентификаторы,
+    классификации, предметы, источники, описание и record_url. Файловые хеши
+    и операции скачивания намеренно не возвращаются.
+    """
+    try:
+        return _dump(await _offload(catalog.record, record_id))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({
+            "error": f"{type(exc).__name__}: {exc}",
+            "provider": "Anna's Archive metadata catalogs",
+        })
+
+
+@mcp.tool()
 async def read_pdf_metadata(path: str, head_pages: int = 3,
                             tail_pages: int = 2) -> str:
     """Достать выходные данные из PDF: метаданные файла, титул, оборот титула,
@@ -374,7 +421,12 @@ def check_links(query: str) -> str:
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_request):  # pragma: no cover — тривиальный маршрут
     from starlette.responses import JSONResponse
-    return JSONResponse({"status": "ok", "service": "gost-ref"})
+    return JSONResponse({
+        "status": "ok",
+        "service": "gost-ref",
+        "version": __version__,
+        "catalog_client": f"annas-mcp {catalog.ANNA_MCP_VERSION}",
+    })
 
 
 # --------------------------------------------------------------------------

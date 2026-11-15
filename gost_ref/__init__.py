@@ -16,7 +16,7 @@ from .model import Person, Reference, SOURCE_TYPES
 from .parse import parse
 from .validate import validate
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 __all__ = [
     "Person", "Reference", "SOURCE_TYPES", "STANDARDS",

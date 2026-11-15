@@ -25,7 +25,7 @@ GOST_REF_API_KEY=dev-secret python server.py --transport streamable-http --port 
 python server.py --transport streamable-http --allow-anonymous
 
 curl -s localhost:8080/health
-# {"status":"ok","service":"gost-ref"}
+# {"status":"ok","service":"gost-ref","version":"1.1.0","catalog_client":"annas-mcp 0.8.2"}
 ```
 
 ## Docker
@@ -36,6 +36,7 @@ docker build -t gost-ref .
 docker run --rm -p 8080:8080 \
   -e PORT=8080 \
   -e GOST_REF_API_KEY="$(openssl rand -hex 32)" \
+  -e ANNAS_SECRET_KEY="<ключ провайдера>" \
   gost-ref
 
 # проверка
@@ -55,12 +56,28 @@ curl -s -X POST localhost:8080/mcp \
 Платформа передаёт порт в `PORT` — сервер его читает, ничего дополнительно
 настраивать не нужно. Эндпоинт ревизии: `https://<container-id>.containers.yandexcloud.net`.
 
+### Почему развёрнуты два контейнера
+
+- `gost-ref` — основной контейнер с `X-API-Key`. Только он получает из
+  Lockbox ключ каталога Anna и предоставляет `search_catalog` и
+  `get_catalog_record`.
+- `gost-ref-open` — анонимный адрес для ChatGPT App, который сейчас не умеет
+  передавать наш заголовок. Он нужен для форматирования и открытых источников,
+  но намеренно запускается без `ANNAS_SECRET_KEY`.
+
+Это не две независимые сборки: оба контейнера могут использовать один образ.
+Секрет Anna нельзя добавлять в `gost-ref-open` — иначе любой посетитель
+анонимного адреса сможет расходовать лимит аккаунта. Удалять открытый контейнер
+можно только после перевода ChatGPT App на авторизованный основной адрес.
+
 ### Быстрый путь: один скрипт
 
 `scripts/yc-bootstrap.sh` заводит всё перечисленное ниже за один запуск и
 печатает значения для переменных репозитория. Образ он не собирает — первую
 ревизию выложит GitHub Actions, локальный Docker не нужен. Повторный запуск
 безопасен: существующее не пересоздаётся, токен в Lockbox не перевыпускается.
+Если в старой версии Lockbox ещё нет ключа каталога, скрипт добавит новую
+версию, сохранив прежний `api-key`.
 
 ```bash
 yc config set folder-id <folder-id>
@@ -86,10 +103,11 @@ SA_ID=$(yc iam service-account get --name gost-ref-sa --format json | jq -r .id)
 yc container registry add-access-binding --id "$REGISTRY_ID" \
   --role container-registry.images.puller --service-account-id "$SA_ID"
 
-# 3. Токен доступа — в Lockbox, не в образ и не в репозиторий
+# 3. Токен MCP и ключ каталога — в Lockbox, не в образ и не в репозиторий
 API_KEY=$(openssl rand -hex 32)
+read -r -s -p "Anna secret key: " ANNAS_SECRET_KEY; echo
 yc lockbox secret create --name gost-ref-api-key \
-  --payload "[{'key':'api-key','text_value':'$API_KEY'}]"
+  --payload "[{'key':'api-key','text_value':'$API_KEY'},{'key':'annas-secret-key','text_value':'$ANNAS_SECRET_KEY'}]"
 SECRET_ID=$(yc lockbox secret get --name gost-ref-api-key --format json | jq -r .id)
 VERSION_ID=$(yc lockbox secret get --name gost-ref-api-key --format json | jq -r .current_version.id)
 yc lockbox secret add-access-binding --id "$SECRET_ID" \
@@ -109,9 +127,11 @@ yc serverless container revision deploy \
   --concurrency 16 \
   --execution-timeout 120s \
   --secret "environment-variable=GOST_REF_API_KEY,id=$SECRET_ID,version-id=$VERSION_ID,key=api-key" \
+  --secret "environment-variable=ANNAS_SECRET_KEY,id=$SECRET_ID,version-id=$VERSION_ID,key=annas-secret-key" \
   --environment GOST_REF_TRANSPORT=streamable-http \
   --environment GOST_REF_MCP_PATH=/mcp \
   --environment GOST_REF_LOOKUP_TIMEOUT=10 \
+  --environment GOST_REF_CATALOG_TIMEOUT=60 \
   --environment GOST_REF_MAX_ITEMS=200
 
 # 6. Публичный вызов: снаружи контейнер открыт, доступ закрывает Bearer-токен
@@ -195,10 +215,14 @@ OAuth: увидев их, некоторые клиенты перестают �
 | `GOST_REF_TRANSPORT` | stdio | `streamable-http` для удалённого режима |
 | `GOST_REF_MCP_PATH` | /mcp | путь MCP-эндпоинта |
 | `GOST_REF_API_KEY` | — | токен доступа; без него HTTP не стартует |
+| `ANNAS_SECRET_KEY` | — | ключ каталожного провайдера; без него остальные инструменты работают, а `search_catalog` вернёт ошибку конфигурации |
+| `ANNAS_MCP_PATH` | `annas-mcp` из PATH | путь к клиенту; в образе `/usr/local/bin/annas-mcp` |
+| `ANNAS_MCP_CACHE_DIR` | задаёт клиент | кэш сессии; в образе `/tmp/annas-mcp-cache` |
 | `GOST_REF_ALLOW_ANONYMOUS` | — | `1` — разрешить HTTP без токена (разработка) |
 | `GOST_REF_PDF_DIR` | — | каталог, из которого `read_pdf_metadata` читает файлы; без него инструмент в HTTP-режиме отвечает отказом |
 | `GOST_REF_PDF_MAX_BYTES` | 67108864 | потолок размера PDF |
 | `GOST_REF_LOOKUP_TIMEOUT` | 20 (в образе 10) | таймаут одного запроса к внешней базе |
+| `GOST_REF_CATALOG_TIMEOUT` | 60 | общий таймаут `search_catalog` и `get_catalog_record`, 1–120 с |
 | `GOST_REF_MAX_ITEMS` | 0 (в образе 200) | потолок числа описаний в `build_bibliography`; 0 — без ограничения |
 | `GOST_REF_ALLOWED_HOSTS` | — | список хостов через запятую для защиты от DNS-rebinding; пусто — проверка `Host` отключена, иначе SDK отвечает «Invalid Host header» на каждый внешний запрос |
 | `GOST_REF_JSON_RESPONSE` | — | `1` — отвечать обычным JSON вместо SSE |

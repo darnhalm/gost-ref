@@ -109,7 +109,12 @@ def test_health_open_and_stateless(server):
     """Health отвечает без токена и не заводит сессию."""
     response = httpx.get(f"{server}/health", timeout=5)
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "gost-ref"}
+    assert response.json() == {
+        "status": "ok",
+        "service": "gost-ref",
+        "version": "1.1.0",
+        "catalog_client": "annas-mcp 0.8.2",
+    }
 
 
 def test_mcp_requires_token(server):
@@ -134,7 +139,8 @@ def test_initialize_and_tools_list(server):
         "list_source_types", "format_reference", "format_footnote_and_record",
         "format_all_standards", "reformat_reference", "parse_reference",
         "validate_reference", "build_bibliography", "repeat_reference",
-        "lookup_metadata", "read_pdf_metadata", "check_links",
+        "lookup_metadata", "search_catalog", "get_catalog_record",
+        "read_pdf_metadata", "check_links",
     }
 
 

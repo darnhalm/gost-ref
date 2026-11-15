@@ -13,8 +13,9 @@
 #                              GitHub через Workload Identity Federation,
 #                              долгоживущий ключ в репозитории не хранится
 #   vars.YC_LOCKBOX_SECRET_ID / vars.YC_LOCKBOX_VERSION_ID
-#                            — секрет Lockbox, в ключе api-key лежит значение
-#                              GOST_REF_API_KEY
+#                            — секрет Lockbox с ключами api-key
+#                              (GOST_REF_API_KEY) и annas-secret-key
+#                              (ANNAS_SECRET_KEY)
 #
 # Токен доступа НЕ хранится ни в репозитории, ни в образе: он приезжает в
 # контейнер из Lockbox на старте ревизии.
@@ -82,10 +83,12 @@ jobs:
           public: true
           revision-secrets: |
             GOST_REF_API_KEY=${{ vars.YC_LOCKBOX_SECRET_ID }}/${{ vars.YC_LOCKBOX_VERSION_ID }}/api-key
+            ANNAS_SECRET_KEY=${{ vars.YC_LOCKBOX_SECRET_ID }}/${{ vars.YC_LOCKBOX_VERSION_ID }}/annas-secret-key
           revision-env: |
             GOST_REF_TRANSPORT=streamable-http
             GOST_REF_MCP_PATH=/mcp
             GOST_REF_LOOKUP_TIMEOUT=10
+            GOST_REF_CATALOG_TIMEOUT=60
             GOST_REF_MAX_ITEMS=200
 
       - name: Проверка живого эндпоинта

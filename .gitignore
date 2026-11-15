@@ -7,6 +7,9 @@ dist/
 .venv/
 venv/
 
+# AppleDouble metadata created on external and network volumes
+._*
+
 # Результаты прогонов оценки — воспроизводятся скриптами из eval/
 eval/*result*.json
 Claude outputs/

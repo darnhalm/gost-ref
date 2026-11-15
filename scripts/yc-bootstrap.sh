@@ -5,6 +5,8 @@
 #
 #   yc config set folder-id <ваш folder-id>
 #   ./scripts/yc-bootstrap.sh
+# Ключ каталога скрипт спросит без эха; для non-interactive запуска:
+#   ANNAS_SECRET_KEY=... ./scripts/yc-bootstrap.sh
 #
 # Скрипт идемпотентен: повторный запуск ничего не ломает и не пересоздаёт.
 # Всё, что он создаёт, можно переименовать переменными окружения:
@@ -104,18 +106,50 @@ grant "serviceAccounts.user на $SA" yc iam service-account add-access-binding 
 echo "аккаунт деплоя: $DEPLOYER_ID"
 
 # --------------------------------------------------------------------------
-# Токен доступа в Lockbox. Существующий секрет не трогаем: перевыпуск ключа
-# оборвал бы всех уже подключённых клиентов.
+# Токен MCP и ключ каталога в Lockbox. Существующий api-key не
+# перевыпускаем: это оборвало бы уже подключённых клиентов. Если в
+# старом секрете нет annas-secret-key, добавляем новую версию поверх него.
 # --------------------------------------------------------------------------
 if yc lockbox secret get --name "$SECRET" >/dev/null 2>&1; then
-  say "Секрет $SECRET уже есть — оставляю как есть"
+  say "Секрет $SECRET уже есть — api-key не меняю"
   NEW_KEY=""
 else
   say "Создаю секрет $SECRET"
   NEW_KEY=$(python3 -c 'import secrets;print(secrets.token_hex(32))')
-  yc lockbox secret create --name "$SECRET" \
-    --payload "[{'key':'api-key','text_value':'$NEW_KEY'}]" >/dev/null
 fi
+
+HAS_ANNA="no"
+if [ -z "$NEW_KEY" ]; then
+  HAS_ANNA=$(yc lockbox payload get --name "$SECRET" --format json \
+    | python3 -c 'import json,sys;print("yes" if any(x.get("key")=="annas-secret-key" for x in json.load(sys.stdin).get("entries",[])) else "no")')
+fi
+
+if [ -n "$NEW_KEY" ] || [ "$HAS_ANNA" != "yes" ]; then
+  ANNA_KEY=${ANNAS_SECRET_KEY:-}
+  if [ -z "$ANNA_KEY" ]; then
+    if [ -r /dev/tty ]; then
+      printf 'Anna secret key: ' >/dev/tty
+      IFS= read -r -s ANNA_KEY </dev/tty
+      printf '\n' >/dev/tty
+    else
+      die "задайте ANNAS_SECRET_KEY для каталожного поиска"
+    fi
+  fi
+  [ -n "$ANNA_KEY" ] || die "пустой Anna secret key"
+fi
+
+if [ -n "$NEW_KEY" ]; then
+  API_KEY="$NEW_KEY" ANNA_KEY="$ANNA_KEY" python3 -c \
+    'import json,os,sys;json.dump([{"key":"api-key","text_value":os.environ["API_KEY"]},{"key":"annas-secret-key","text_value":os.environ["ANNA_KEY"]}],sys.stdout)' \
+    | yc lockbox secret create --name "$SECRET" --payload - >/dev/null
+elif [ "$HAS_ANNA" != "yes" ]; then
+  yc lockbox payload get --name "$SECRET" --format json \
+    | ANNA_KEY="$ANNA_KEY" python3 -c \
+      'import json,os,sys;entries=json.load(sys.stdin).get("entries",[]);api=next((x.get("text_value") for x in entries if x.get("key")=="api-key"),None);api or sys.exit("в текущей версии секрета нет api-key");json.dump([{"key":"api-key","text_value":api},{"key":"annas-secret-key","text_value":os.environ["ANNA_KEY"]}],sys.stdout)' \
+    | yc lockbox secret add-version --name "$SECRET" \
+        --description 'add catalog search key' --payload - >/dev/null
+fi
+unset ANNA_KEY 2>/dev/null || true
 SECRET_JSON=$(yc lockbox secret get --name "$SECRET" --format json)
 SECRET_ID=$(printf '%s' "$SECRET_JSON" | jget id)
 VERSION_ID=$(printf '%s' "$SECRET_JSON" | jget current_version.id)

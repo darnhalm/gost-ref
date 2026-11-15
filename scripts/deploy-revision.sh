@@ -56,10 +56,12 @@ yc serverless container revision deploy \
   --zone-instances-limit 2 \
   --zone-requests-limit 20 \
   --secret "environment-variable=GOST_REF_API_KEY,id=$SECRET_ID,version-id=$VERSION_ID,key=api-key" \
+  --secret "environment-variable=ANNAS_SECRET_KEY,id=$SECRET_ID,version-id=$VERSION_ID,key=annas-secret-key" \
   --metadata-options aws-v1-http-endpoint=disabled,gce-http-endpoint=disabled \
   --environment GOST_REF_TRANSPORT=streamable-http \
   --environment GOST_REF_MCP_PATH=/mcp \
   --environment GOST_REF_LOOKUP_TIMEOUT=10 \
+  --environment GOST_REF_CATALOG_TIMEOUT=60 \
   --environment GOST_REF_MAX_ITEMS=200 \
   >/dev/null
 

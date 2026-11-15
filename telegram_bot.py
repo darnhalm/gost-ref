@@ -367,11 +367,14 @@ class TelegramBot:
             record_id = str(item.get("id") or "")
             detail_data = _callback("d", record_id)
             gost_data = _callback("g", record_id)
+            source_url = _safe_url(item.get("record_url"))
             row = []
             if detail_data:
                 row.append({"text": f"{index}. Подробнее", "callback_data": detail_data})
             if gost_data:
                 row.append({"text": f"{index}. ГОСТ", "callback_data": gost_data})
+            if source_url:
+                row.append({"text": f"{index}. Источник", "url": source_url})
             if row:
                 keyboard.append(row)
 
@@ -412,10 +415,15 @@ class TelegramBot:
             lines.append(f"<b>Идентификаторы:</b> {_escape('; '.join(extra_ids))}")
         url = _safe_url(result.get("record_url"))
         if url:
-            lines.append(f'<a href="{_escape(url)}">Карточка-кандидат</a> — требует проверки')
+            lines.append(f'<a href="{_escape(url)}">Страница источника</a> — сверьте издание')
         lines.append(f"<b>ID:</b> <code>{_escape(result.get('id') or record_id)}</code>")
         gost_data = _callback("g", str(result.get("id") or record_id))
-        keyboard = [[{"text": "Оформить по ГОСТ", "callback_data": gost_data}]] if gost_data else []
+        buttons = []
+        if gost_data:
+            buttons.append({"text": "Оформить по ГОСТ", "callback_data": gost_data})
+        if url:
+            buttons.append({"text": "Страница источника", "url": url})
+        keyboard = [buttons] if buttons else []
         await self._send(chat_id, "\n".join(lines), keyboard)
 
     async def _gost(self, chat_id: int, record_id: str) -> None:
@@ -455,7 +463,8 @@ class TelegramBot:
             "<code>/search запрос</code> — найти издания\n"
             "<code>/book catalog:id</code> — открыть запись\n"
             "<code>/id</code> — показать ваш Telegram ID\n\n"
-            "Бот ищет метаданные и оформляет ГОСТ. Файлы книг он не скачивает."
+            "Бот ищет метаданные, открывает страницу источника и оформляет "
+            "ГОСТ. Файлы книг он не скачивает."
         )
 
     @staticmethod

@@ -24,6 +24,7 @@ class FakeGateway:
                 "more_pages": True,
                 "results": [{
                     "id": "isbndb:9780892362509",
+                    "record_url": "https://example.invalid/record",
                     "fields": {
                         "title": "Historical & Philosophical Issues",
                         "authors": "Nicholas Stanley Price",
@@ -105,6 +106,9 @@ def test_search_uses_protected_catalog_and_builds_buttons(bot):
     keyboard = payload["reply_markup"]["inline_keyboard"]
     assert keyboard[0][0]["callback_data"] == "d:isbndb:9780892362509"
     assert keyboard[0][1]["callback_data"] == "g:isbndb:9780892362509"
+    assert keyboard[0][2] == {
+        "text": "1. Источник", "url": "https://example.invalid/record",
+    }
     assert keyboard[-1][0]["callback_data"] == "p:2"
 
 
@@ -145,6 +149,26 @@ def test_gost_callback_never_exposes_download_data(bot):
     text = response.json()["text"]
     assert "Сноска" in text and "Список литературы" in text
     assert "must-not-appear" not in text
+
+
+def test_details_include_source_page_button(bot):
+    client, _gateway = bot
+    update = {
+        "update_id": 6,
+        "callback_query": {
+            "id": "callback-2",
+            "from": {"id": 42},
+            "data": "d:isbndb:9780892362509",
+            "message": {"message_id": 9, "chat": {"id": 42}},
+        },
+    }
+    response = _post(client, update)
+    payload = response.json()
+    assert "Страница источника" in payload["text"]
+    assert payload["reply_markup"]["inline_keyboard"][0][-1] == {
+        "text": "Страница источника",
+        "url": "https://example.invalid/record",
+    }
 
 
 def test_health_does_not_disclose_ids_or_tokens(bot):

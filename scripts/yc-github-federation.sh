@@ -60,11 +60,28 @@ fi
 echo "федерация: $FED_ID"
 
 # --------------------------------------------------------------------------
-# Привязки. Subject привязан к ветке, поэтому заводим две: текущую ветку —
-# чтобы запустить деплой вручную и проверить сервер до мержа, и main — для
-# обычной работы после него.
+# Привязки. GitHub может использовать либо обычный subject
+# repo:owner/repo, либо immutable subject repo:owner@id/repo@id. Второй
+# включён в настройках OIDC некоторых репозиториев и переживает переименования.
+# Если gh авторизован, читаем фактическую настройку; иначе используем обычный
+# subject. К префиксу добавляется ветка: текущая и main.
 # --------------------------------------------------------------------------
 BRANCH=$(git branch --show-current 2>/dev/null || echo main)
+SUBJECT_PREFIX="repo:$OWNER/$REPO"
+if command -v gh >/dev/null 2>&1; then
+  OIDC_CONFIG=$(gh api "repos/$OWNER/$REPO/actions/oidc/customization/sub" 2>/dev/null || true)
+  IMMUTABLE_PREFIX=$(printf '%s' "$OIDC_CONFIG" | python3 -c \
+    'import json,sys
+try:
+    data=json.load(sys.stdin)
+    print(data.get("sub_claim_prefix", "") if data.get("use_immutable_subject") else "")
+except (json.JSONDecodeError, AttributeError):
+    print("")')
+  if [ -n "$IMMUTABLE_PREFIX" ]; then
+    SUBJECT_PREFIX="$IMMUTABLE_PREFIX"
+    echo "immutable subject: $SUBJECT_PREFIX"
+  fi
+fi
 EXISTING=$(yc iam workload-identity federated-credential list \
   --service-account-id "$SA_ID" --format json 2>/dev/null |
   python3 -c 'import sys,json
@@ -73,7 +90,7 @@ print("\n".join(i.get("external_subject_id","") for i in items))' || true)
 
 for ref in "$BRANCH" main; do
   [ -n "$ref" ] || continue
-  SUBJECT="repo:$OWNER/$REPO:ref:refs/heads/$ref"
+  SUBJECT="$SUBJECT_PREFIX:ref:refs/heads/$ref"
   if printf '%s\n' "$EXISTING" | grep -Fxq "$SUBJECT"; then
     echo "привязка уже есть: $SUBJECT"
     continue

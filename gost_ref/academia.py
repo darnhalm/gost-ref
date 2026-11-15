@@ -201,10 +201,15 @@ def search(query: str, limit: int = 5) -> dict:
     if not 1 <= limit <= 10:
         raise AcademiaSearchError("limit must be between 1 and 10")
 
+    diagnostics: list[dict[str, object]] = []
     try:
         body = _post_html(query)
+        diagnostics.append({"provider": "duckduckgo", "bytes": len(body)})
     except (OSError, urllib.error.URLError) as exc:
-        raise AcademiaSearchError("web search provider unavailable") from exc
+        body = ""
+        diagnostics.append({
+            "provider": "duckduckgo", "error": type(exc).__name__,
+        })
 
     parser = _ResultParser()
     parser.feed(body)
@@ -212,24 +217,46 @@ def search(query: str, limit: int = 5) -> dict:
     if not results:
         try:
             bing_body = _get_bing_html(query)
-        except (OSError, urllib.error.URLError):
+            diagnostics.append({"provider": "bing", "bytes": len(bing_body)})
+        except (OSError, urllib.error.URLError) as exc:
             bing_body = ""
+            diagnostics.append({"provider": "bing", "error": type(exc).__name__})
         bing_parser = _BingParser()
         bing_parser.feed(bing_body)
         results = _collect(bing_parser.results, limit)
     if not results:
         try:
             academia_body = _get_academia_reader_markdown(query)
-        except (OSError, urllib.error.URLError):
+            academia_raw = _academia_markdown_results(academia_body)
+            diagnostics.append({
+                "provider": "academia-reader",
+                "bytes": len(academia_body),
+                "links": len(academia_raw),
+            })
+        except (OSError, urllib.error.URLError) as exc:
             academia_body = ""
-        results = _collect(_academia_markdown_results(academia_body), limit)
+            academia_raw = []
+            diagnostics.append({
+                "provider": "academia-reader", "error": type(exc).__name__,
+            })
+        results = _collect(academia_raw, limit)
     if not results:
         try:
             reader_body = _get_reader_markdown(query)
-        except (OSError, urllib.error.URLError):
+            reader_raw = _markdown_results(reader_body)
+            diagnostics.append({
+                "provider": "duckduckgo-reader",
+                "bytes": len(reader_body),
+                "links": len(reader_raw),
+            })
+        except (OSError, urllib.error.URLError) as exc:
             reader_body = ""
-        results = _collect(_markdown_results(reader_body), limit)
-    return {
+            reader_raw = []
+            diagnostics.append({
+                "provider": "duckduckgo-reader", "error": type(exc).__name__,
+            })
+        results = _collect(reader_raw, limit)
+    response = {
         "query": query,
         "results": results,
         "result_count": len(results),
@@ -240,3 +267,6 @@ def search(query: str, limit: int = 5) -> dict:
             "и сверьте заглавие и автора. Файлы не скачивались."
         ),
     }
+    if not results:
+        response["diagnostics"] = diagnostics
+    return response

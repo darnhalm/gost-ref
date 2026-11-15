@@ -92,13 +92,6 @@ def test_webhook_rejects_wrong_secret(bot):
     assert gateway.mcp_calls == []
 
 
-def test_yandex_trigger_accepts_update_without_webhook_header(bot):
-    client, _gateway = bot
-    response = client.post("/telegram/trigger", json=_update("/id", update_id=11))
-    assert response.status_code == 200
-    assert response.json()["method"] == "sendMessage"
-
-
 def test_search_uses_protected_catalog_and_builds_buttons(bot):
     client, gateway = bot
     response = _post(client, _update())

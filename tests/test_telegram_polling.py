@@ -15,6 +15,22 @@ class FakeTelegramAPI:
         self.calls.append((method, payload))
         return True
 
+    async def send_local_document(self, chat_id, path, caption=""):
+        self.calls.append(("sendLocalDocument", {
+            "chat_id": chat_id, "path": path, "caption": caption,
+        }))
+        return True
+
+
+class FakeAcademiaDownload:
+    download_available = True
+
+    def __init__(self, path):
+        self.path = path
+
+    async def download(self, _url):
+        return self.path
+
 
 @pytest.fixture()
 def anyio_backend():
@@ -64,3 +80,29 @@ async def test_polling_runner_acknowledges_callback():
         "answerCallbackQuery", {"callback_query_id": "callback-1"},
     )
     assert telegram.calls[-1][0] == "sendMessage"
+
+
+@pytest.mark.anyio
+async def test_polling_runner_uploads_and_cleans_local_academia_pdf(tmp_path):
+    document = tmp_path / "paper.pdf"
+    document.write_bytes(b"%PDF-1.4\n")
+    settings = Settings(
+        webhook_secret="local-polling",
+        gost_ref_url="https://protected.invalid",
+        gost_ref_api_key="api-key",
+        allowed_user_ids=frozenset({42}),
+        academia_download_enabled=True,
+    )
+    telegram = FakeTelegramAPI()
+    bot = TelegramBot(
+        settings, gateway=FakeGateway(), academia=FakeAcademiaDownload(document),
+    )
+    runner = PollingRunner(bot, telegram)
+
+    await runner.handle(_update(
+        "/academia_get https://www.academia.edu/49699327/Test", update_id=22,
+    ))
+
+    assert telegram.calls[-1][0] == "sendLocalDocument"
+    assert telegram.calls[-1][1]["path"] == str(document)
+    assert not document.exists()

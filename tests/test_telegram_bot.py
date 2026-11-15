@@ -9,6 +9,7 @@ pytest.importorskip("httpx")
 
 from starlette.testclient import TestClient
 
+from academia_local import AcademiaItem
 from telegram_bot import Settings, create_app
 
 
@@ -52,7 +53,28 @@ class FakeGateway:
                 "footnote": {"text": "Price N. Historical issues. 1996."},
                 "record": {"text": "Price N. Historical issues. — 1996."},
             }
+        if name == "lookup_metadata":
+            return {
+                "fields": {
+                    "type": "article",
+                    "title": "Digital heritage in digital museums",
+                    "authors": "Cary Karp",
+                    "year": "2004",
+                    "container": "Museum International",
+                },
+                "source": "OpenAlex, https://api.openalex.org/works/1",
+            }
         raise AssertionError(name)
+
+
+class FakeAcademia:
+    download_available = True
+
+    async def search(self, query, limit=5):
+        return [AcademiaItem(
+            title="Digital heritage in digital museums",
+            url="https://www.academia.edu/49699327/Digital_heritage_in_digital_museums",
+        )]
 
 
 @pytest.fixture()
@@ -64,7 +86,7 @@ def bot():
         allowed_user_ids=frozenset({42}),
     )
     gateway = FakeGateway()
-    return TestClient(create_app(settings, gateway)), gateway
+    return TestClient(create_app(settings, gateway, FakeAcademia())), gateway
 
 
 def _update(text="/search 9780892362509", user_id=42, update_id=1):
@@ -109,7 +131,8 @@ def test_search_uses_protected_catalog_and_builds_buttons(bot):
     assert keyboard[0][2] == {
         "text": "1. Источник", "url": "https://example.invalid/record",
     }
-    assert keyboard[-1][0]["callback_data"] == "p:2"
+    assert any(row[0].get("callback_data") == "p:2" for row in keyboard)
+    assert keyboard[-1][0]["text"] == "Найти тексты в Academia.edu"
 
 
 def test_plain_text_is_a_search(bot):
@@ -178,3 +201,14 @@ def test_health_does_not_disclose_ids_or_tokens(bot):
         "service": "gost-ref-telegram",
         "allowlist_configured": True,
     }
+
+
+def test_academia_search_returns_candidate_links(bot):
+    client, gateway = bot
+    response = _post(client, _update("/academia museum heritage", update_id=7))
+    payload = response.json()
+    assert gateway.mcp_calls == []
+    assert "Digital heritage in digital museums" in payload["text"]
+    row = payload["reply_markup"]["inline_keyboard"][0]
+    assert row[0]["url"].startswith("https://www.academia.edu/49699327/")
+    assert row[1]["callback_data"].startswith("ag:")

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Private Telegram interface for the protected gost-ref MCP service.
 
-The bot exposes catalog metadata and GOST formatting only.  It never receives
-the Anna provider key and has no download or file-hash commands: all catalog
-requests go through the authenticated gost-ref endpoint.
+The bot exposes catalog metadata and GOST formatting.  Its optional local
+Academia adapter searches public result links and can save a user-selected,
+already accessible document without receiving the Anna provider key.
 """
 
 from __future__ import annotations
@@ -15,18 +15,22 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 from collections import OrderedDict, defaultdict, deque
 from contextvars import ContextVar
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, urlparse
 
 import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
+
+from academia_local import AcademiaError, AcademiaItem, AcademiaLocal
 
 LOGGER = logging.getLogger("gost-ref-telegram")
 MAX_UPDATE_BYTES = 1_048_576
@@ -47,6 +51,9 @@ class Settings:
     request_timeout: float = 75.0
     rate_limit: int = 10
     rate_window: int = 60
+    academia_download_enabled: bool = False
+    academia_downloader_dir: str = ""
+    academia_output_dir: str = ""
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -84,6 +91,16 @@ class Settings:
             request_timeout=float(os.environ.get("TELEGRAM_REQUEST_TIMEOUT", "75")),
             rate_limit=int(os.environ.get("TELEGRAM_RATE_LIMIT", "10")),
             rate_window=int(os.environ.get("TELEGRAM_RATE_WINDOW", "60")),
+            academia_download_enabled=os.environ.get(
+                "ACADEMIA_DOWNLOAD_ENABLED", ""
+            ).lower() in {"1", "true", "yes"},
+            academia_downloader_dir=os.environ.get(
+                "ACADEMIA_DOWNLOADER_DIR",
+                "~/.codex/skill-runtimes/academiadl-py",
+            ),
+            academia_output_dir=os.environ.get(
+                "ACADEMIA_OUTPUT_DIR", "~/Downloads/Academia",
+            ),
         )
 
 
@@ -185,7 +202,12 @@ def _query_from_search_message(message: dict[str, Any]) -> str:
 
 
 class TelegramBot:
-    def __init__(self, settings: Settings, gateway: Gateway | None = None):
+    def __init__(
+        self,
+        settings: Settings,
+        gateway: Gateway | None = None,
+        academia: AcademiaLocal | None = None,
+    ):
         self.settings = settings
         self.gateway = gateway or Gateway(settings)
         self.rate = RateLimiter(settings.rate_limit, settings.rate_window)
@@ -195,6 +217,12 @@ class TelegramBot:
         self.seen_updates: OrderedDict[
             int, tuple[str, dict[str, Any]] | None
         ] = OrderedDict()
+        self.academia = academia or AcademiaLocal(
+            settings.academia_downloader_dir or "~/.codex/skill-runtimes/academiadl-py",
+            settings.academia_output_dir or "~/Downloads/Academia",
+        )
+        self.academia_items: OrderedDict[str, AcademiaItem] = OrderedDict()
+        self.academia_queries: OrderedDict[str, str] = OrderedDict()
 
     async def health(self, _request: Request) -> JSONResponse:
         return JSONResponse({
@@ -308,6 +336,14 @@ class TelegramBot:
             if not value:
                 raise BotError("Использование: /book catalog:id")
             await self._details(chat_id, value)
+        elif command == "/academia":
+            if not value:
+                raise BotError("Использование: /academia тема, название или автор")
+            await self._academia_search(chat_id, value)
+        elif command == "/academia_get":
+            if not value:
+                raise BotError("Использование: /academia_get https://www.academia.edu/…")
+            await self._academia_download_url(chat_id, value)
         elif command:
             raise BotError("Неизвестная команда. Используйте /help.")
         elif text:
@@ -332,6 +368,15 @@ class TelegramBot:
             await self._details(chat_id, value)
         elif prefix == "g" and value:
             await self._gost(chat_id, value)
+        elif prefix == "as" and value:
+            query = self.academia_queries.get(value)
+            if not query:
+                raise BotError("Поисковый запрос устарел. Отправьте его ещё раз.")
+            await self._academia_search(chat_id, query)
+        elif prefix == "ag" and value:
+            await self._academia_gost(chat_id, value)
+        elif prefix == "ax" and value:
+            await self._academia_download(chat_id, value)
 
     async def _search(
         self, chat_id: int, query: str, page: int,
@@ -385,6 +430,11 @@ class TelegramBot:
             pages.append({"text": "Дальше →", "callback_data": f"p:{page + 1}"})
         if pages:
             keyboard.append(pages)
+        query_token = self._remember_query(query)
+        keyboard.append([{
+            "text": "Найти тексты в Academia.edu",
+            "callback_data": f"as:{query_token}",
+        }])
         lines.append("\n<i>Это кандидаты. Перед цитированием сверьте карточку издания.</i>")
         payload = self._message_payload(chat_id, "\n".join(lines), keyboard)
         if edit_message_id is not None:
@@ -442,6 +492,114 @@ class TelegramBot:
         )
         await self._send(chat_id, text)
 
+    def _remember_query(self, query: str) -> str:
+        token = secrets.token_urlsafe(8)
+        self.academia_queries[token] = query
+        while len(self.academia_queries) > 200:
+            self.academia_queries.popitem(last=False)
+        return token
+
+    def _remember_academia(self, item: AcademiaItem) -> str:
+        token = secrets.token_urlsafe(8)
+        self.academia_items[token] = item
+        while len(self.academia_items) > 300:
+            self.academia_items.popitem(last=False)
+        return token
+
+    async def _academia_search(self, chat_id: int, query: str) -> None:
+        query = " ".join(query.split())
+        if not query or len(query) > MAX_QUERY_CHARS:
+            raise BotError(f"Запрос должен содержать от 1 до {MAX_QUERY_CHARS} символов.")
+        try:
+            items = await self.academia.search(query, limit=5)
+        except AcademiaError as exc:
+            raise BotError(str(exc)) from exc
+        lines = [f"🎓 Поиск в Academia.edu: {_escape(query)}"]
+        keyboard: list[list[dict[str, str]]] = []
+        if not items:
+            lines.append("\nПрямых страниц документов в веб-выдаче не найдено.")
+        for index, item in enumerate(items, 1):
+            token = self._remember_academia(item)
+            lines.append(f"\n<b>{index}. {_escape(_short(item.title, 240))}</b>")
+            if item.authors:
+                lines.append(_escape(_short(item.authors, 180)))
+            row = [
+                {"text": f"{index}. Источник", "url": item.url},
+                {"text": f"{index}. ГОСТ", "callback_data": f"ag:{token}"},
+            ]
+            if self.settings.academia_download_enabled and self.academia.download_available:
+                row.append({"text": f"{index}. Скачать", "callback_data": f"ax:{token}"})
+            keyboard.append(row)
+        keyboard.append([{
+            "text": "Открыть поиск Academia.edu",
+            "url": f"https://www.academia.edu/search?q={quote_plus(query)}",
+        }])
+        lines.append(
+            "\n<i>Это кандидаты из веб-поиска. Кнопка ГОСТ отдельно проверяет "
+            "название по научным базам.</i>"
+        )
+        await self._send(chat_id, "\n".join(lines), keyboard)
+
+    @staticmethod
+    def _title_similarity(left: str, right: str) -> float:
+        def clean(value: str) -> str:
+            return re.sub(r"[^\w]+", " ", value.casefold()).strip()
+        return SequenceMatcher(None, clean(left), clean(right)).ratio()
+
+    async def _academia_gost(self, chat_id: int, token: str) -> None:
+        item = self.academia_items.get(token)
+        if not item:
+            raise BotError("Результат устарел. Повторите поиск Academia.")
+        lookup = await self.gateway.mcp(
+            "lookup_metadata", {"query": item.title, "kind": "title"},
+        )
+        fields = lookup.get("fields") or {}
+        found_title = str(fields.get("title") or "")
+        if not found_title or self._title_similarity(item.title, found_title) < 0.62:
+            await self._send(
+                chat_id,
+                "⚠️ Метаданных недостаточно для надёжного ГОСТ. Откройте источник "
+                "и пришлите DOI, ISBN или первую страницу документа.",
+                [[{"text": "Открыть Academia.edu", "url": item.url}]],
+            )
+            return
+        pair = await self.gateway.mcp("format_footnote_and_record", {"fields": fields})
+        footnote = _short((pair.get("footnote") or {}).get("text") or "—", 1600)
+        bibliography = _short((pair.get("record") or {}).get("text") or "—", 1600)
+        source_name = str(lookup.get("source") or "научная база").split(",", 1)[0]
+        await self._send(
+            chat_id,
+            "📝 <b>Сноска</b>\n"
+            f"{_escape(footnote)}\n\n"
+            "📖 <b>Список литературы</b>\n"
+            f"{_escape(bibliography)}\n\n"
+            f"<i>Метаданные: {_escape(source_name)}. Название совпало; "
+            "автора и издание всё равно сверьте на странице документа.</i>",
+            [[{"text": "Открыть Academia.edu", "url": item.url}]],
+        )
+
+    async def _academia_download(self, chat_id: int, token: str) -> None:
+        item = self.academia_items.get(token)
+        if not item:
+            raise BotError("Результат устарел. Повторите поиск Academia.")
+        await self._academia_download_url(chat_id, item.url, title=item.title)
+
+    async def _academia_download_url(
+        self, chat_id: int, url: str, *, title: str = "Документ Academia.edu",
+    ) -> None:
+        if not self.settings.academia_download_enabled:
+            raise BotError("Скачивание включается только в локальном режиме на Mac.")
+        try:
+            path = await self.academia.download(url)
+        except AcademiaError as exc:
+            raise BotError(str(exc)) from exc
+        await self._emit("sendLocalDocument", {
+            "chat_id": chat_id,
+            "path": str(path),
+            "caption": _short(title, 900),
+            "cleanup": True,
+        })
+
     async def _send_error(self, update: dict[str, Any], text: str) -> None:
         chat_id = self._chat_id(update)
         if chat_id is not None:
@@ -462,9 +620,11 @@ class TelegramBot:
             "Отправьте название, автора или ISBN обычным сообщением либо:\n"
             "<code>/search запрос</code> — найти издания\n"
             "<code>/book catalog:id</code> — открыть запись\n"
+            "<code>/academia запрос</code> — найти страницы Academia.edu\n"
+            "<code>/academia_get URL</code> — локально сохранить доступный документ\n"
             "<code>/id</code> — показать ваш Telegram ID\n\n"
-            "Бот ищет метаданные, открывает страницу источника и оформляет "
-            "ГОСТ. Файлы книг он не скачивает."
+            "Бот ищет метаданные, открывает страницу источника и оформляет ГОСТ. "
+            "Сохранение Academia работает только при ручном запуске на Mac."
         )
 
     @staticmethod
@@ -492,8 +652,12 @@ class TelegramBot:
         await self._emit("sendMessage", self._message_payload(chat_id, text, keyboard))
 
 
-def create_app(settings: Settings | None = None, gateway: Gateway | None = None) -> Starlette:
-    bot = TelegramBot(settings or Settings.from_env(), gateway=gateway)
+def create_app(
+    settings: Settings | None = None,
+    gateway: Gateway | None = None,
+    academia: AcademiaLocal | None = None,
+) -> Starlette:
+    bot = TelegramBot(settings or Settings.from_env(), gateway=gateway, academia=academia)
     app = Starlette(routes=[
         Route("/health", bot.health, methods=["GET"]),
         Route("/telegram/webhook", bot.webhook, methods=["POST"]),

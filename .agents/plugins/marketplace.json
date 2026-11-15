@@ -1,0 +1,20 @@
+{
+  "name": "gost-ref-local",
+  "interface": {
+    "displayName": "gost-ref local plugins"
+  },
+  "plugins": [
+    {
+      "name": "academia-search",
+      "source": {
+        "source": "local",
+        "path": "./plugins/academia-search"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

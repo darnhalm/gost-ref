@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "academia-search",
+  "version": "0.1.0",
+  "description": "Поиск публичных страниц документов Academia.edu без скачивания файлов.",
+  "author": {
+    "name": "darnhalm"
+  },
+  "license": "MIT",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Academia Search",
+        "shortDescription": "Поиск ссылок Academia.edu",
+        "longDescription": "Находит страницы публикаций Academia.edu по названию, автору или теме и возвращает карточки-кандидаты со ссылками. Файлы не скачивает.",
+        "developerName": "darnhalm",
+        "capabilities": [],
+        "defaultPrompt": "Найди публикации на Academia.edu по моему запросу и покажи ссылки."
+      }
+    }
+  }
+}

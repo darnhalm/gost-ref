@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -33,6 +34,25 @@ class TelegramAPI:
         data = response.json()
         if not data.get("ok"):
             raise RuntimeError(f"Telegram API rejected {method}")
+        return data.get("result")
+
+    async def send_local_document(
+        self, chat_id: int, path: str, caption: str = "",
+    ) -> Any:
+        document = Path(path).expanduser().resolve()
+        if not document.is_file():
+            raise RuntimeError("local document is missing")
+        with document.open("rb") as stream:
+            response = await self.client.post(
+                f"{self.base_url}/sendDocument",
+                data={"chat_id": str(chat_id), "caption": caption},
+                files={"document": (document.name, stream, "application/pdf")},
+                timeout=httpx.Timeout(900.0, connect=10.0),
+            )
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            raise RuntimeError("Telegram API rejected sendDocument")
         return data.get("result")
 
     async def updates(self, offset: int | None) -> list[dict[str, Any]]:
@@ -79,7 +99,17 @@ class PollingRunner:
 
         if reply is not None:
             method, payload = reply
-            await self.api.call(method, payload)
+            if method == "sendLocalDocument":
+                path = str(payload["path"])
+                try:
+                    await self.api.send_local_document(
+                        int(payload["chat_id"]), path, str(payload.get("caption") or ""),
+                    )
+                finally:
+                    if payload.get("cleanup"):
+                        Path(path).unlink(missing_ok=True)
+            else:
+                await self.api.call(method, payload)
 
 
 async def run() -> None:

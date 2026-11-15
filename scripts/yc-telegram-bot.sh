@@ -107,13 +107,15 @@ BOT_NAME=$(printf '%s' "$BOT_INFO" | python3 -c \
 
 if [ "$UPDATE_TOKEN" = yes ]; then
   TOKEN_PAYLOAD_JSON=$(BOT_TOKEN="$BOT_TOKEN" python3 -c \
-    'import json,os;print(json.dumps([{"key":"bot-token","text_value":os.environ["BOT_TOKEN"]}]))')
+    'import json,os;print(json.dumps([{"key":"bot-token","text_value":os.environ["BOT_TOKEN"]},{"key":"webhook-secret"},{"key":"gost-api-key"},{"key":"allowed-user-ids"}]))')
   if yc lockbox secret get --name "$TOKEN_SECRET" >/dev/null 2>&1; then
     printf '%s' "$TOKEN_PAYLOAD_JSON" | yc lockbox secret add-version \
       --name "$TOKEN_SECRET" --description 'isolate Telegram Bot API token' \
       --payload - >/dev/null
   else
-    printf '%s' "$TOKEN_PAYLOAD_JSON" | yc lockbox secret create \
+    BOT_TOKEN="$BOT_TOKEN" python3 -c \
+      'import json,os;print(json.dumps([{"key":"bot-token","text_value":os.environ["BOT_TOKEN"]}]))' \
+      | yc lockbox secret create \
       --name "$TOKEN_SECRET" --payload - >/dev/null
   fi
   unset TOKEN_PAYLOAD_JSON

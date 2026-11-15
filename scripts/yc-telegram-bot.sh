@@ -106,14 +106,17 @@ BOT_NAME=$(printf '%s' "$BOT_INFO" | python3 -c \
 [ -n "$BOT_NAME" ] || die "Telegram не вернул username бота"
 
 if [ "$UPDATE_TOKEN" = yes ]; then
-  BOT_TOKEN="$BOT_TOKEN" python3 -c \
-    'import json,os,sys;json.dump([{"key":"bot-token","text_value":os.environ["BOT_TOKEN"]}],sys.stdout)' \
-    | if yc lockbox secret get --name "$TOKEN_SECRET" >/dev/null 2>&1; then
-        yc lockbox secret add-version --name "$TOKEN_SECRET" \
-          --description 'isolate Telegram Bot API token' --payload - >/dev/null
-      else
-        yc lockbox secret create --name "$TOKEN_SECRET" --payload - >/dev/null
-      fi
+  TOKEN_PAYLOAD_JSON=$(BOT_TOKEN="$BOT_TOKEN" python3 -c \
+    'import json,os;print(json.dumps([{"key":"bot-token","text_value":os.environ["BOT_TOKEN"]}]))')
+  if yc lockbox secret get --name "$TOKEN_SECRET" >/dev/null 2>&1; then
+    printf '%s' "$TOKEN_PAYLOAD_JSON" | yc lockbox secret add-version \
+      --name "$TOKEN_SECRET" --description 'isolate Telegram Bot API token' \
+      --payload - >/dev/null
+  else
+    printf '%s' "$TOKEN_PAYLOAD_JSON" | yc lockbox secret create \
+      --name "$TOKEN_SECRET" --payload - >/dev/null
+  fi
+  unset TOKEN_PAYLOAD_JSON
 fi
 
 current_config_value() {
@@ -134,14 +137,17 @@ fi
 [ -n "$WEBHOOK_SECRET" ] || WEBHOOK_SECRET=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')
 
 if [ "$UPDATE_CONFIG" = yes ]; then
-  WEBHOOK_SECRET="$WEBHOOK_SECRET" ALLOWED_IDS="$ALLOWED_IDS" GOST_API_KEY="$GOST_API_KEY" \
-    python3 -c 'import json,os,sys;entries=[{"key":"webhook-secret","text_value":os.environ["WEBHOOK_SECRET"]},{"key":"gost-api-key","text_value":os.environ["GOST_API_KEY"]}];allowed=os.environ.get("ALLOWED_IDS","").strip();entries += ([{"key":"allowed-user-ids","text_value":allowed}] if allowed else []);json.dump(entries,sys.stdout)' \
-    | if yc lockbox secret get --name "$CONFIG_SECRET" >/dev/null 2>&1; then
-        yc lockbox secret add-version --name "$CONFIG_SECRET" \
-          --description 'update Telegram runtime configuration' --payload - >/dev/null
-      else
-        yc lockbox secret create --name "$CONFIG_SECRET" --payload - >/dev/null
-      fi
+  CONFIG_PAYLOAD_JSON=$(WEBHOOK_SECRET="$WEBHOOK_SECRET" ALLOWED_IDS="$ALLOWED_IDS" GOST_API_KEY="$GOST_API_KEY" \
+    python3 -c 'import json,os;entries=[{"key":"webhook-secret","text_value":os.environ["WEBHOOK_SECRET"]},{"key":"gost-api-key","text_value":os.environ["GOST_API_KEY"]}];allowed=os.environ.get("ALLOWED_IDS","").strip();entries += ([{"key":"allowed-user-ids","text_value":allowed}] if allowed else []);print(json.dumps(entries))')
+  if yc lockbox secret get --name "$CONFIG_SECRET" >/dev/null 2>&1; then
+    printf '%s' "$CONFIG_PAYLOAD_JSON" | yc lockbox secret add-version \
+      --name "$CONFIG_SECRET" --description 'update Telegram runtime configuration' \
+      --payload - >/dev/null
+  else
+    printf '%s' "$CONFIG_PAYLOAD_JSON" | yc lockbox secret create \
+      --name "$CONFIG_SECRET" --payload - >/dev/null
+  fi
+  unset CONFIG_PAYLOAD_JSON
 fi
 
 TOKEN_SECRET_ID=$(yc lockbox secret get --name "$TOKEN_SECRET" --format json | jget id)

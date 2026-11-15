@@ -170,6 +170,33 @@ def _academia_markdown_results(body: str) -> list[tuple[str, str]]:
     ]
 
 
+def _embedded_results(body: str) -> list[tuple[str, str]]:
+    """Extract result links without depending on a search engine's CSS classes."""
+    decoded = html.unescape(body).replace(r"\/", "/")
+    for _ in range(2):
+        decoded = urllib.parse.unquote(decoded)
+
+    results: list[tuple[str, str]] = []
+    for href, label in re.findall(
+        r'''<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>(.*?)</a\s*>''',
+        decoded,
+        flags=re.I | re.S,
+    ):
+        title = re.sub(r"<[^>]+>", " ", label)
+        results.append((href, title))
+
+    for href in re.findall(
+        r"https://(?:www\.)?academia\.edu/\d{4,}(?:/[^\s\"'<>?#&)]*)?",
+        decoded,
+        flags=re.I,
+    ):
+        results.append((href, ""))
+
+    for encoded in re.findall(r"[?&]u=(a1[A-Za-z0-9_-]{20,})", decoded):
+        results.append((f"https://www.bing.com/ck/a?u={encoded}", ""))
+    return results
+
+
 def _collect(raw_results: list[tuple[str, str]], limit: int) -> list[dict[str, str]]:
     results: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -213,7 +240,7 @@ def search(query: str, limit: int = 5) -> dict:
 
     parser = _ResultParser()
     parser.feed(body)
-    results = _collect(parser.results, limit)
+    results = _collect(parser.results + _embedded_results(body), limit)
     if not results:
         try:
             bing_body = _get_bing_html(query)
@@ -223,7 +250,7 @@ def search(query: str, limit: int = 5) -> dict:
             diagnostics.append({"provider": "bing", "error": type(exc).__name__})
         bing_parser = _BingParser()
         bing_parser.feed(bing_body)
-        results = _collect(bing_parser.results, limit)
+        results = _collect(bing_parser.results + _embedded_results(bing_body), limit)
     if not results:
         try:
             academia_body = _get_academia_reader_markdown(query)

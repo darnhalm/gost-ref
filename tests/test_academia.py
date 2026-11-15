@@ -51,6 +51,36 @@ def test_search_falls_back_to_bing_and_decodes_redirect(monkeypatch):
     assert result["results"] == [{"title": "Digital heritage", "url": target}]
 
 
+def test_search_extracts_embedded_percent_encoded_document_url(monkeypatch):
+    body = (
+        '<script>var target="https%3A%2F%2Fwww.academia.edu%2F49699327%2F'
+        'Digital_heritage_in_digital_museums";</script>'
+    )
+    monkeypatch.setattr(academia, "_post_html", lambda _query: body)
+
+    result = academia.search("digital heritage", limit=1)
+
+    assert result["results"] == [{
+        "title": "Digital heritage in digital museums",
+        "url": "https://www.academia.edu/49699327/Digital_heritage_in_digital_museums",
+    }]
+
+
+def test_search_extracts_generic_anchor_without_css_class(monkeypatch):
+    body = (
+        '<a href="https://www.academia.edu/34749961/Glitch_in_the_museum">'
+        '<strong>Glitch</strong> in the museum</a>'
+    )
+    monkeypatch.setattr(academia, "_post_html", lambda _query: body)
+
+    result = academia.search("museum", limit=1)
+
+    assert result["results"] == [{
+        "title": "Glitch in the museum",
+        "url": "https://www.academia.edu/34749961/Glitch_in_the_museum",
+    }]
+
+
 def test_search_falls_back_to_reader_markdown(monkeypatch):
     target = "https://www.academia.edu/49699327/Digital_heritage_in_digital_museums"
     redirect = "https://duckduckgo.com/l/?uddg=" + target.replace(":", "%3A").replace("/", "%2F")

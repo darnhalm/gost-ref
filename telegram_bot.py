@@ -207,6 +207,13 @@ class TelegramBot:
         supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if not hmac.compare_digest(supplied, self.settings.webhook_secret):
             return PlainTextResponse("forbidden", status_code=403)
+        return await self._receive(request)
+
+    async def trigger(self, request: Request):
+        """Receive an Update from an authenticated Yandex Telegram Trigger."""
+        return await self._receive(request)
+
+    async def _receive(self, request: Request):
         try:
             length = int(request.headers.get("content-length") or 0)
         except ValueError:
@@ -488,6 +495,7 @@ def create_app(settings: Settings | None = None, gateway: Gateway | None = None)
     app = Starlette(routes=[
         Route("/health", bot.health, methods=["GET"]),
         Route("/telegram/webhook", bot.webhook, methods=["POST"]),
+        Route("/telegram/trigger", bot.trigger, methods=["POST"]),
     ])
     app.state.bot = bot
     return app

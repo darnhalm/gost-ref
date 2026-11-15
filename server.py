@@ -29,7 +29,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from gost_ref import __version__, api, catalog, lookup, pdfmeta
+from gost_ref import __version__, academia, api, catalog, lookup, pdfmeta
 from gost_ref.model import SOURCE_TYPES, Reference
 from gost_ref.text import today
 
@@ -358,6 +358,24 @@ async def search_catalog(query: str, title: str = "", author: str = "",
             "error": f"{type(exc).__name__}: {exc}",
             "provider": "Anna's Archive metadata catalogs",
             "hint": "проверьте ANNAS_SECRET_KEY, ANNAS_MCP_PATH и доступность провайдера",
+        })
+
+
+@mcp.tool()
+async def search_academia(query: str, limit: int = 5) -> str:
+    """Найти публичные страницы документов Academia.edu.
+
+    Возвращает только заглавия и прямые ссылки-кандидаты из веб-поиска.
+    Файлы не скачиваются, содержимое публикаций не извлекается. Перед
+    цитированием откройте выбранную страницу и сверьте автора и заглавие;
+    затем дополните метаданные через lookup_metadata.
+    """
+    try:
+        return _dump(await _offload(academia.search, query, limit=limit))
+    except Exception as exc:  # noqa: BLE001 — сеть не должна ронять сервер
+        return _dump({
+            "error": f"{type(exc).__name__}: {exc}",
+            "provider": "web search restricted to academia.edu",
         })
 
 

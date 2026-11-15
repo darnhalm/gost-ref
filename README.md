@@ -104,6 +104,7 @@ Docker, выкладка в serverless-контейнеры и переменн�
 | `repeat_reference` | «Там же», «Указ. соч.», «Цит. по», «См. также» |
 | `lookup_metadata` | метаданные по DOI, ISBN, заглавию |
 | `search_catalog` | издания из Open Library, WorldCat, ISBNdb, Google Books и других каталов |
+| `search_academia` | публичные страницы документов Academia.edu; только ссылки-кандидаты, без скачивания |
 | `get_catalog_record` | полные поля и идентификаторы выбранной каталожной записи |
 | `read_pdf_metadata` | выходные данные из PDF: титул, оборот титула, ISBN, УДК |
 | `check_links` | ссылки на РИНЦ, РГБ, НЭБ, фонд Росстандарта для ручной сверки |

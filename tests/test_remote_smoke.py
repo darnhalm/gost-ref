@@ -139,7 +139,7 @@ def test_initialize_and_tools_list(server):
         "list_source_types", "format_reference", "format_footnote_and_record",
         "format_all_standards", "reformat_reference", "parse_reference",
         "validate_reference", "build_bibliography", "repeat_reference",
-        "lookup_metadata", "search_catalog", "get_catalog_record",
+        "lookup_metadata", "search_catalog", "search_academia", "get_catalog_record",
         "read_pdf_metadata", "check_links",
     }
 

@@ -51,6 +51,21 @@ def test_search_falls_back_to_bing_and_decodes_redirect(monkeypatch):
     assert result["results"] == [{"title": "Digital heritage", "url": target}]
 
 
+def test_search_falls_back_to_reader_markdown(monkeypatch):
+    target = "https://www.academia.edu/49699327/Digital_heritage_in_digital_museums"
+    redirect = "https://duckduckgo.com/l/?uddg=" + target.replace(":", "%3A").replace("/", "%2F")
+    markdown = f"## [(PDF) Digital heritage in digital museums | Academia]({redirect})"
+    monkeypatch.setattr(academia, "_post_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_bing_html", lambda _query: "")
+    monkeypatch.setattr(academia, "_get_reader_markdown", lambda _query: markdown)
+
+    result = academia.search("digital heritage", limit=1)
+
+    assert result["results"] == [{
+        "title": "Digital heritage in digital museums", "url": target,
+    }]
+
+
 @pytest.mark.parametrize("query,limit", [("", 5), ("x", 0), ("x", 11)])
 def test_search_rejects_invalid_arguments(query, limit):
     with pytest.raises(academia.AcademiaSearchError):

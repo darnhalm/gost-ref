@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse, urlunparse
 MAX_QUERY_CHARS = 300
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 BING_URL = "https://www.bing.com/search"
+READER_URL = "https://r.jina.ai/http://html.duckduckgo.com/html/"
 
 
 class AcademiaSearchError(RuntimeError):
@@ -124,6 +125,29 @@ def _get_bing_html(query: str) -> str:
         return response.read().decode("utf-8", "replace")
 
 
+def _get_reader_markdown(query: str) -> str:
+    url = READER_URL + "?" + urllib.parse.urlencode({
+        "q": f"site:academia.edu/ {query}",
+    })
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0 (compatible; gost-ref/1.1)"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read().decode("utf-8", "replace")
+
+
+def _markdown_results(body: str) -> list[tuple[str, str]]:
+    return [
+        (href, title)
+        for title, href in re.findall(
+            r"\[([^\]\n]{4,500})\]\((https://duckduckgo\.com/l/\?uddg=[^)\s]+)\)",
+            body,
+            flags=re.I,
+        )
+    ]
+
+
 def _collect(raw_results: list[tuple[str, str]], limit: int) -> list[dict[str, str]]:
     results: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -171,6 +195,12 @@ def search(query: str, limit: int = 5) -> dict:
         bing_parser = _BingParser()
         bing_parser.feed(bing_body)
         results = _collect(bing_parser.results, limit)
+    if not results:
+        try:
+            reader_body = _get_reader_markdown(query)
+        except (OSError, urllib.error.URLError):
+            reader_body = ""
+        results = _collect(_markdown_results(reader_body), limit)
     return {
         "query": query,
         "results": results,

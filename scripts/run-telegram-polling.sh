@@ -46,7 +46,7 @@ if [ -z "${GOST_REF_URL:-}" ]; then
   export GOST_REF_URL="https://$GOST_CONTAINER_ID.containers.yandexcloud.net"
 fi
 export TELEGRAM_ALLOWED_USER_IDS=${TELEGRAM_ALLOWED_USER_IDS:-492719286}
-export ACADEMIA_DOWNLOAD_ENABLED=${ACADEMIA_DOWNLOAD_ENABLED:-1}
+export ACADEMIA_DOWNLOAD_ENABLED=${ACADEMIA_DOWNLOAD_ENABLED:-0}
 export ACADEMIA_DOWNLOADER_DIR=${ACADEMIA_DOWNLOADER_DIR:-/Users/darnhalm/.codex/skill-runtimes/academiadl-py}
 export ACADEMIA_OUTPUT_DIR=${ACADEMIA_OUTPUT_DIR:-/Users/darnhalm/Downloads/Academia}
 

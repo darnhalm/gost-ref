@@ -8,7 +8,7 @@ from typing import Any
 
 def _norm(value: Any) -> str:
     s = unicodedata.normalize("NFKC", str(value or "")).casefold().replace("ё", "е")
-    return " ".join(re.findall(r"[^\\W_]+", s, flags=re.UNICODE))
+    return " ".join(re.findall(r"[^\W_]+", s, flags=re.UNICODE))
 
 
 def _edition_key(fields: dict) -> tuple:

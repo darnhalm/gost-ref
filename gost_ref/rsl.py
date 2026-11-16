@@ -100,12 +100,12 @@ def parse_marc21_text(url: str, marc_text: str) -> dict:
     tags = {}
     for raw in str(marc_text or "").splitlines():
         line = raw.strip()
-        match = re.match(r"^(?:=)?(\\d{3})\\s+(?:[0-9 #\\\\]{0,2}\\s+)?(.*)$", line)
+        match = re.match(r"^(?:=)?(\d{3})\s+(?:[0-9 #\\]{0,2}\s+)?(.*)$", line)
         if match:
             tags.setdefault(match.group(1), []).append(match.group(2))
     def subfields(tag):
         for line in tags.get(tag, []):
-            found = re.findall(r"(?:\\$|\\|)([a-z0-9])\\s*([^$|]+)", line, re.I)
+            found = re.findall(r"(?:\$|\|)([a-z0-9])\s*([^$|]+)", line, re.I)
             if found:
                 yield {k.lower(): " ".join(v.split()).rstrip(" /:;,.") for k, v in found}
     fields = {}

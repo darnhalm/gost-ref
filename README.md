@@ -88,7 +88,8 @@ Docker, выкладка в serverless-контейнеры и переменн�
 Локальный polling теперь является резервным режимом: при обычной
 остановке он восстанавливает облачный webhook. Принудительно вернуть
 облачный режим можно `scripts/telegram-cloud-mode.sh`, а заранее разбудить
-оба serverless-контейнера — `scripts/warm-cloud.sh`.
+оба serverless-контейнера — `scripts/warm-cloud.sh`. Единое интерактивное
+меню для этих действий — `scripts/search-mode-menu.sh`.
 
 Отдельный локальный плагин `plugins/academia-search` предоставляет MCP-инструмент
 `search_academia`. Он возвращает только заглавия и прямые ссылки-кандидаты и не

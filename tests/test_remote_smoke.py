@@ -140,8 +140,20 @@ def test_initialize_and_tools_list(server):
         "format_all_standards", "reformat_reference", "parse_reference",
         "validate_reference", "build_bibliography", "repeat_reference",
         "lookup_metadata", "search_catalog", "search_academia", "get_catalog_record",
-        "read_pdf_metadata", "check_links",
+        "read_pdf_metadata", "check_links", "search_bibliography",
     }
+
+
+
+def test_search_bibliography_registered_and_validates_query(server):
+    """New discovery endpoint responds through MCP without external network access."""
+    result = _result(_call(server, "tools/call", {
+        "name": "search_bibliography", "arguments": {"query": "  "},
+    }))
+    payload = json.loads(result["content"][0]["text"])
+    assert "error" in payload
+    assert "ValueError" in payload["error"]
+
 
 
 def test_format_footnote_and_record_matches_core(server):

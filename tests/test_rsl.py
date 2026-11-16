@@ -30,6 +30,25 @@ class RSLTests(unittest.TestCase):
         self.assertEqual(record["fields"]["title"], "Словарь Академии Российской")
         self.assertFalse(record["verified"])
 
+    def test_marc21_preferred(self):
+        from gost_ref.rsl import parse_record_with_fallback
+        marc = ("245 10 $a Первые русские города Сибири / $c В. И. Кочедамов\\n"
+                "100 1# $a Кочедамов, В. И.\\n"
+                "260 ## $a Москва : $b Стройиздат, $c 1978\\n"
+                "300 ## $a 190 с.\\n")
+        result = parse_record_with_fallback(record_url("01004095555"), marc, "<div>Заглавие</div><div>Другое</div>")
+        self.assertEqual(result["parser_used"], "marc21")
+        self.assertEqual(result["fields"]["title"], "Первые русские города Сибири")
+        self.assertEqual(result["fields"]["publisher"], "Стройиздат")
+        self.assertFalse(result["verified"])
+
+    def test_fallback_when_marc_unusable(self):
+        from gost_ref.rsl import parse_record_with_fallback
+        html = "<div>Заглавие</div><div>Словарь Академии Российской</div>"
+        result = parse_record_with_fallback(record_url("01004095555"), "not MARC", html)
+        self.assertEqual(result["parser_used"], "html_fallback")
+        self.assertEqual(result["fields"]["title"], "Словарь Академии Российской")
+
 
 if __name__ == "__main__":
     unittest.main()

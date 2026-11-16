@@ -185,7 +185,18 @@ TELEGRAM_ALLOWED_USER_IDS='<ваш числовой ID>' \
 Скрипт удаляет webhook без удаления очереди, берёт Bot API token из
 macOS Keychain, API-ключ MCP из Keychain или Yandex Lockbox и запускает
 long polling. Бот работает, пока процесс запущен и Mac подключён к сети.
-Остановка — `Ctrl+C`.
+Остановка — `Ctrl+C`: перед завершением процесс восстановит облачный
+webhook. Если локальный процесс был аварийно завершён, включите облако явно:
+
+```bash
+./scripts/telegram-cloud-mode.sh
+```
+
+Перед работой можно отдельно прогреть основной MCP-контейнер и Telegram-контейнер:
+
+```bash
+./scripts/warm-cloud.sh
+```
 
 ### Yandex Serverless Container
 

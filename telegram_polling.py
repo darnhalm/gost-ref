@@ -7,6 +7,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+import signal
 from typing import Any
 
 import httpx
@@ -112,14 +113,46 @@ class PollingRunner:
                 await self.api.call(method, payload)
 
 
+async def restore_cloud_webhook(
+    api: TelegramAPI,
+    url: str,
+    secret: str,
+) -> bool:
+    """Restore the cloud webhook after the optional local fallback stops."""
+    url = str(url or "").strip()
+    secret = str(secret or "").strip()
+    if not url or not secret:
+        return False
+    await api.call("setWebhook", {
+        "url": url,
+        "secret_token": secret,
+        "allowed_updates": ["message", "callback_query"],
+    })
+    return True
+
+
 async def run() -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("missing TELEGRAM_BOT_TOKEN")
     api = TelegramAPI(token)
     runner = PollingRunner(TelegramBot(Settings.from_env()), api)
+    restore_url = os.environ.get("TELEGRAM_RESTORE_WEBHOOK_URL", "").strip()
+    restore_secret = os.environ.get(
+        "TELEGRAM_RESTORE_WEBHOOK_SECRET", "",
+    ).strip()
     offset: int | None = None
     delay = 1
+    task = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+    handled_signals = []
+    if task is not None:
+        for signum in (signal.SIGTERM, signal.SIGHUP):
+            try:
+                loop.add_signal_handler(signum, task.cancel)
+                handled_signals.append(signum)
+            except (NotImplementedError, RuntimeError):
+                pass
     try:
         await api.call("deleteWebhook", {"drop_pending_updates": False})
         LOGGER.info("polling started")
@@ -139,6 +172,18 @@ async def run() -> None:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 30)
     finally:
+        if restore_url and restore_secret:
+            try:
+                await asyncio.shield(restore_cloud_webhook(
+                    api, restore_url, restore_secret,
+                ))
+                LOGGER.info("cloud webhook restored")
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.error(
+                    "cloud webhook restore failed: %s", type(exc).__name__,
+                )
+        for signum in handled_signals:
+            loop.remove_signal_handler(signum)
         await api.close()
 
 
@@ -152,6 +197,8 @@ def main() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     try:
         asyncio.run(run())
+    except asyncio.CancelledError:
+        LOGGER.info("polling stopped; cloud mode requested")
     except KeyboardInterrupt:
         LOGGER.info("polling stopped")
 

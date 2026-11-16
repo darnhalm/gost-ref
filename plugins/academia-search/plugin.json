@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "academia-search",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Поиск публичных страниц документов Academia.edu без скачивания файлов.",
   "author": {
     "name": "darnhalm"

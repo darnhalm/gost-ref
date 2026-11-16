@@ -7,11 +7,11 @@
 ```bash
 git clone https://github.com/darnhalm/gost-ref.git ~/gost-ref
 cd ~/gost-ref
-python3 -m pytest tests/ -q          # должно быть 219 passed
+python3 -m pytest tests/ -q          # должно быть 221 passed
 ```
 
 В минимальной среде сетевой MCP smoke-тест может быть пропущен; это отображается
-отдельно от `219 passed`.
+отдельно от `221 passed`.
 
 Проверка без установки:
 

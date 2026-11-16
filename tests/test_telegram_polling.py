@@ -6,7 +6,7 @@ pytest.importorskip("httpx")
 pytest.importorskip("starlette")
 
 from telegram_bot import Settings, TelegramBot
-from telegram_polling import PollingRunner
+from telegram_polling import PollingRunner, restore_cloud_webhook
 from test_telegram_bot import FakeGateway, _update
 
 
@@ -109,3 +109,29 @@ async def test_polling_runner_uploads_and_cleans_local_academia_pdf(tmp_path):
     assert telegram.calls[-1][0] == "sendLocalDocument"
     assert telegram.calls[-1][1]["path"] == str(document)
     assert not document.exists()
+
+
+@pytest.mark.anyio
+async def test_restore_cloud_webhook_after_local_fallback():
+    telegram = FakeTelegramAPI()
+
+    restored = await restore_cloud_webhook(
+        telegram,
+        "https://gateway.example/telegram/webhook",
+        "webhook-secret",
+    )
+
+    assert restored is True
+    assert telegram.calls == [("setWebhook", {
+        "url": "https://gateway.example/telegram/webhook",
+        "secret_token": "webhook-secret",
+        "allowed_updates": ["message", "callback_query"],
+    })]
+
+
+@pytest.mark.anyio
+async def test_restore_cloud_webhook_skips_missing_configuration():
+    telegram = FakeTelegramAPI()
+
+    assert await restore_cloud_webhook(telegram, "", "") is False
+    assert telegram.calls == []

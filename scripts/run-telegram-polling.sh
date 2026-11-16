@@ -18,6 +18,28 @@ if ! GOST_REF_API_KEY=$(security find-generic-password -a gost-api-key -s "$SERV
 fi
 export TELEGRAM_WEBHOOK_SECRET=local-polling
 
+# The local fallback temporarily removes Telegram's webhook. Remember the
+# existing cloud endpoint so a normal stop (Ctrl+C/SIGTERM) returns the bot to
+# Yandex Serverless automatically.
+TELEGRAM_GATEWAY_NAME=${TELEGRAM_GATEWAY_NAME:-gost-ref-telegram}
+TELEGRAM_CONFIG_SECRET=${TELEGRAM_CONFIG_SECRET:-gost-ref-telegram-runtime}
+if [ -z "${TELEGRAM_RESTORE_WEBHOOK_URL:-}" ]; then
+  GATEWAY_DOMAIN=$(yc serverless api-gateway get \
+    --name "$TELEGRAM_GATEWAY_NAME" --format json 2>/dev/null \
+    | python3 -c 'import json,sys;print(json.load(sys.stdin).get("domain", ""))' \
+    || true)
+  if [ -n "$GATEWAY_DOMAIN" ]; then
+    export TELEGRAM_RESTORE_WEBHOOK_URL="https://$GATEWAY_DOMAIN/telegram/webhook"
+  fi
+fi
+if [ -z "${TELEGRAM_RESTORE_WEBHOOK_SECRET:-}" ]; then
+  TELEGRAM_RESTORE_WEBHOOK_SECRET=$(yc lockbox payload get \
+    --name "$TELEGRAM_CONFIG_SECRET" --format json 2>/dev/null \
+    | python3 -c 'import json,sys;print(next((x.get("text_value", "") for x in json.load(sys.stdin).get("entries", []) if x.get("key") == "webhook-secret"), ""))' \
+    || true)
+  export TELEGRAM_RESTORE_WEBHOOK_SECRET
+fi
+
 if [ -z "${GOST_REF_URL:-}" ]; then
   GOST_CONTAINER_ID=$(yc serverless container get --name gost-ref --format json \
     | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')

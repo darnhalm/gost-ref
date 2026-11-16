@@ -50,4 +50,9 @@ export ACADEMIA_DOWNLOAD_ENABLED=${ACADEMIA_DOWNLOAD_ENABLED:-0}
 export ACADEMIA_DOWNLOADER_DIR=${ACADEMIA_DOWNLOADER_DIR:-/Users/darnhalm/.codex/skill-runtimes/academiadl-py}
 export ACADEMIA_OUTPUT_DIR=${ACADEMIA_OUTPUT_DIR:-/Users/darnhalm/Downloads/Academia}
 
+echo "Прогреваю облачные контейнеры перед запуском локального резерва..."
+if ! "$REPO_ROOT/scripts/warm-cloud.sh"; then
+  echo "Предупреждение: прогрев завершился с ошибкой; продолжаю локальный запуск." >&2
+fi
+
 exec "$PYTHON" "$REPO_ROOT/telegram_polling.py"

@@ -36,6 +36,7 @@ LOGGER = logging.getLogger("gost-ref-telegram")
 MAX_UPDATE_BYTES = 1_048_576
 MAX_QUERY_CHARS = 300
 MAX_MESSAGE_CHARS = 4000
+WARM_BUTTON_TEXT = "🔥 Прогреть поиск"
 
 
 class BotError(RuntimeError):
@@ -109,6 +110,22 @@ class Gateway:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+
+    async def warm(self) -> float:
+        """Wake the protected MCP container and return elapsed seconds."""
+        started = time.monotonic()
+        timeout = min(self.settings.request_timeout, 25.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{self.settings.gost_ref_url}/health")
+        if response.status_code != 200:
+            raise RuntimeError(f"gost-ref health returned HTTP {response.status_code}")
+        try:
+            payload = response.json()
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("gost-ref health returned invalid JSON") from exc
+        if payload.get("status") != "ok":
+            raise RuntimeError("gost-ref health is not ready")
+        return time.monotonic() - started
 
     async def mcp(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         payload = {
@@ -327,7 +344,9 @@ class TelegramBot:
         text = str(message.get("text") or "").strip()
         command, value = self._command(text)
         if command in {"/start", "/help"}:
-            await self._send(chat_id, self._help())
+            await self._send(chat_id, self._help(), main_menu=True)
+        elif command == "/warm" or text == WARM_BUTTON_TEXT:
+            await self._warm(chat_id)
         elif command == "/search":
             if not value:
                 raise BotError("Использование: /search название, автор или ISBN")
@@ -348,6 +367,15 @@ class TelegramBot:
             raise BotError("Неизвестная команда. Используйте /help.")
         elif text:
             await self._search(chat_id, text, 1)
+
+    async def _warm(self, chat_id: int) -> None:
+        elapsed = await self.gateway.warm()
+        await self._send(
+            chat_id,
+            "✅ <b>Поиск готов.</b> MCP-контейнер отвечает "
+            f"(прогрев: {elapsed:.1f} с). Можно отправлять запрос.",
+            main_menu=True,
+        )
 
     async def _callback(self, callback: dict[str, Any]) -> None:
         data = str(callback.get("data") or "")
@@ -619,6 +647,7 @@ class TelegramBot:
             "<b>Поиск библиографических данных</b>\n\n"
             "Отправьте название, автора или ISBN обычным сообщением либо:\n"
             "<code>/search запрос</code> — найти издания\n"
+            "<code>/warm</code> — прогреть поиск перед работой\n"
             "<code>/book catalog:id</code> — открыть запись\n"
             "<code>/academia запрос</code> — найти страницы Academia.edu\n"
             "<code>/academia_get URL</code> — локально сохранить доступный документ\n"
@@ -630,6 +659,7 @@ class TelegramBot:
     @staticmethod
     def _message_payload(
         chat_id: int, text: str, keyboard: list[list[dict[str, str]]] | None = None,
+        *, main_menu: bool = False,
     ) -> dict[str, Any]:
         if len(text) > MAX_MESSAGE_CHARS:
             cutoff = text.rfind("\n", 0, MAX_MESSAGE_CHARS - 40)
@@ -643,13 +673,23 @@ class TelegramBot:
         }
         if keyboard:
             payload["reply_markup"] = {"inline_keyboard": keyboard}
+        elif main_menu:
+            payload["reply_markup"] = {
+                "keyboard": [[{"text": WARM_BUTTON_TEXT}]],
+                "resize_keyboard": True,
+                "is_persistent": True,
+            }
         return payload
 
     async def _send(
         self, chat_id: int, text: str,
         keyboard: list[list[dict[str, str]]] | None = None,
+        *, main_menu: bool = False,
     ) -> None:
-        await self._emit("sendMessage", self._message_payload(chat_id, text, keyboard))
+        await self._emit(
+            "sendMessage",
+            self._message_payload(chat_id, text, keyboard, main_menu=main_menu),
+        )
 
 
 def create_app(

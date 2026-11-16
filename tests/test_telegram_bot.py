@@ -16,6 +16,11 @@ from telegram_bot import Settings, create_app
 class FakeGateway:
     def __init__(self):
         self.mcp_calls = []
+        self.warm_calls = 0
+
+    async def warm(self):
+        self.warm_calls += 1
+        return 0.25
 
     async def mcp(self, name, arguments):
         self.mcp_calls.append((name, arguments))
@@ -141,6 +146,29 @@ def test_plain_text_is_a_search(bot):
     assert gateway.mcp_calls[-1] == (
         "search_catalog", {"query": "Name of a book", "page": 1, "limit": 5},
     )
+
+
+def test_start_shows_persistent_warm_button(bot):
+    client, gateway = bot
+    response = _post(client, _update("/start", update_id=20))
+    payload = response.json()
+    assert gateway.mcp_calls == []
+    assert payload["reply_markup"] == {
+        "keyboard": [[{"text": "🔥 Прогреть поиск"}]],
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+@pytest.mark.parametrize("text", ["/warm", "🔥 Прогреть поиск"])
+def test_warm_command_and_button_wake_mcp(bot, text):
+    client, gateway = bot
+    response = _post(client, _update(text, update_id=21))
+    payload = response.json()
+    assert gateway.warm_calls == 1
+    assert "Поиск готов" in payload["text"]
+    assert "0.2 с" in payload["text"]
+    assert payload["reply_markup"]["keyboard"][0][0]["text"] == "🔥 Прогреть поиск"
 
 
 def test_unauthorized_user_can_only_get_own_id(bot):

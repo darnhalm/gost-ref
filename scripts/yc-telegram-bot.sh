@@ -246,7 +246,13 @@ WEBHOOK_RESPONSE=$(curl -fsS -m 30 -X POST \
 printf '%s' "$WEBHOOK_RESPONSE" | python3 -c \
   'import json,sys;data=json.load(sys.stdin);data.get("ok") or sys.exit("Telegram rejected setWebhook");print("Telegram webhook: настроен")'
 
-unset BOT_TOKEN WEBHOOK_SECRET BOT_INFO TOKEN_PAYLOAD CONFIG_PAYLOAD GOST_PAYLOAD GOST_API_KEY CONFIG_GOST_KEY 2>/dev/null || true
+COMMANDS_RESPONSE=$(curl -fsS -m 30 -X POST \
+  "https://api.telegram.org/bot${BOT_TOKEN}/setMyCommands" \
+  --data-urlencode 'commands=[{"command":"warm","description":"Прогреть поиск перед работой"},{"command":"search","description":"Найти книгу по названию, автору или ISBN"},{"command":"academia","description":"Найти страницы Academia.edu"},{"command":"help","description":"Показать справку и кнопку прогрева"}]')
+printf '%s' "$COMMANDS_RESPONSE" | python3 -c \
+  'import json,sys;data=json.load(sys.stdin);data.get("ok") or sys.exit("Telegram rejected setMyCommands");print("Telegram commands: настроены")'
+
+unset BOT_TOKEN WEBHOOK_SECRET BOT_INFO TOKEN_PAYLOAD CONFIG_PAYLOAD GOST_PAYLOAD GOST_API_KEY CONFIG_GOST_KEY COMMANDS_RESPONSE 2>/dev/null || true
 
 [ "$GRANT_FAILED" = 0 ] || die "часть прав не выдана — см. сообщения выше"
 printf '\nГотово: https://t.me/%s\nWebhook: %s\n' "$BOT_NAME" "$WEBHOOK_URL"

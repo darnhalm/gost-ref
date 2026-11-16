@@ -6,7 +6,7 @@ pytest.importorskip("httpx")
 pytest.importorskip("starlette")
 
 from telegram_bot import Settings, TelegramBot
-from telegram_polling import PollingRunner, restore_cloud_webhook
+from telegram_polling import PollingRunner, notify_local_started, restore_cloud_webhook
 from test_telegram_bot import FakeGateway, _update
 
 
@@ -135,3 +135,18 @@ async def test_restore_cloud_webhook_skips_missing_configuration():
 
     assert await restore_cloud_webhook(telegram, "", "") is False
     assert telegram.calls == []
+
+
+@pytest.mark.anyio
+async def test_local_start_notification_goes_to_allowlisted_users():
+    telegram = FakeTelegramAPI()
+
+    delivered = await notify_local_started(telegram, frozenset({84, 42}))
+
+    assert delivered == 2
+    assert [payload["chat_id"] for method, payload in telegram.calls] == [42, 84]
+    assert all(method == "sendMessage" for method, _payload in telegram.calls)
+    assert all(
+        "Локальный режим запущен" in payload["text"]
+        for _method, payload in telegram.calls
+    )

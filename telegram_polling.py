@@ -131,12 +131,41 @@ async def restore_cloud_webhook(
     return True
 
 
+async def notify_local_started(
+    api: TelegramAPI,
+    user_ids: frozenset[int],
+) -> int:
+    """Tell allowlisted users that this Mac now handles Telegram updates."""
+    delivered = 0
+    for user_id in sorted(user_ids):
+        try:
+            await api.call("sendMessage", {
+                "chat_id": user_id,
+                "text": (
+                    "🖥 <b>Локальный режим запущен.</b>\n"
+                    "Telegram-поиск теперь обрабатывается на этом Mac. "
+                    "При остановке скрипта бот автоматически вернётся в облако."
+                ),
+                "parse_mode": "HTML",
+                "disable_web_page_preview": True,
+            })
+            delivered += 1
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning(
+                "local start notification failed for user %s: %s",
+                user_id,
+                type(exc).__name__,
+            )
+    return delivered
+
+
 async def run() -> None:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         raise RuntimeError("missing TELEGRAM_BOT_TOKEN")
     api = TelegramAPI(token)
-    runner = PollingRunner(TelegramBot(Settings.from_env()), api)
+    settings = Settings.from_env()
+    runner = PollingRunner(TelegramBot(settings), api)
     restore_url = os.environ.get("TELEGRAM_RESTORE_WEBHOOK_URL", "").strip()
     restore_secret = os.environ.get(
         "TELEGRAM_RESTORE_WEBHOOK_SECRET", "",
@@ -155,6 +184,8 @@ async def run() -> None:
                 pass
     try:
         await api.call("deleteWebhook", {"drop_pending_updates": False})
+        notified = await notify_local_started(api, settings.allowed_user_ids)
+        LOGGER.info("local start notification delivered to %s user(s)", notified)
         LOGGER.info("polling started")
         while True:
             try:

@@ -26,6 +26,7 @@ from urllib.parse import quote_plus, urlparse
 
 import httpx
 from starlette.applications import Starlette
+from starlette.background import BackgroundTask
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
@@ -49,6 +50,7 @@ class Settings:
     gost_ref_url: str
     gost_ref_api_key: str
     allowed_user_ids: frozenset[int]
+    telegram_bot_token: str = ""
     request_timeout: float = 75.0
     rate_limit: int = 10
     rate_window: int = 60
@@ -89,6 +91,7 @@ class Settings:
             gost_ref_url=url,
             gost_ref_api_key=required["GOST_REF_API_KEY"],
             allowed_user_ids=allowed,
+            telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", "").strip(),
             request_timeout=float(os.environ.get("TELEGRAM_REQUEST_TIMEOUT", "75")),
             rate_limit=int(os.environ.get("TELEGRAM_RATE_LIMIT", "10")),
             rate_window=int(os.environ.get("TELEGRAM_RATE_WINDOW", "60")),
@@ -166,6 +169,22 @@ class Gateway:
         return result
 
 
+class TelegramOutboundAPI:
+    """Send cloud webhook results through Telegram after immediate acknowledgement."""
+
+    def __init__(self, token: str):
+        self.base_url = f"https://api.telegram.org/bot{token}"
+
+    async def call(self, method: str, payload: dict[str, Any]) -> Any:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(f"{self.base_url}/{method}", json=payload)
+        response.raise_for_status()
+        data = response.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"Telegram API rejected {method}")
+        return data.get("result")
+
+
 class RateLimiter:
     def __init__(self, limit: int, window: int):
         self.limit = max(1, limit)
@@ -224,9 +243,14 @@ class TelegramBot:
         settings: Settings,
         gateway: Gateway | None = None,
         academia: AcademiaLocal | None = None,
+        telegram_api: TelegramOutboundAPI | None = None,
     ):
         self.settings = settings
         self.gateway = gateway or Gateway(settings)
+        self.telegram_api = telegram_api or (
+            TelegramOutboundAPI(settings.telegram_bot_token)
+            if settings.telegram_bot_token else None
+        )
         self.rate = RateLimiter(settings.rate_limit, settings.rate_window)
         self.direct_reply: ContextVar[tuple[str, dict[str, Any]] | None] = ContextVar(
             "telegram_direct_reply", default=None,
@@ -272,6 +296,15 @@ class TelegramBot:
         if isinstance(update_id, int):
             if update_id in self.seen_updates:
                 return self._webhook_response(self.seen_updates[update_id])
+        if self.telegram_api is not None:
+            if isinstance(update_id, int):
+                self.seen_updates[update_id] = None
+                while len(self.seen_updates) > 1000:
+                    self.seen_updates.popitem(last=False)
+            return PlainTextResponse(
+                "ok",
+                background=BackgroundTask(self._process_outbound, update),
+            )
         reply_token = self.direct_reply.set(None)
         try:
             await self.process(update)
@@ -287,6 +320,48 @@ class TelegramBot:
             while len(self.seen_updates) > 1000:
                 self.seen_updates.popitem(last=False)
         return self._webhook_response(reply)
+
+    async def _process_outbound(self, update: dict[str, Any]) -> None:
+        """Process an acknowledged cloud update and deliver its result separately."""
+        if self.telegram_api is None:
+            return
+        callback = update.get("callback_query")
+        callback_id = callback.get("id") if isinstance(callback, dict) else None
+        if callback_id:
+            try:
+                await self.telegram_api.call(
+                    "answerCallbackQuery", {"callback_query_id": callback_id},
+                )
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning(
+                    "callback acknowledgement failed: %s", type(exc).__name__,
+                )
+
+        reply_token = self.direct_reply.set(None)
+        try:
+            try:
+                await self.process(update)
+            except BotError as exc:
+                await self._send_error(update, str(exc))
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.error("background update failed: %s", type(exc).__name__)
+                await self._send_error(
+                    update, "Сервис временно недоступен. Попробуйте позже.",
+                )
+            reply = self.direct_reply.get()
+        finally:
+            self.direct_reply.reset(reply_token)
+
+        if reply is None:
+            return
+        method, payload = reply
+        if method == "sendLocalDocument":
+            LOGGER.error("cloud mode refused local document delivery")
+            return
+        try:
+            await self.telegram_api.call(method, payload)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.error("Telegram delivery failed: %s", type(exc).__name__)
 
     @staticmethod
     def _webhook_response(reply: tuple[str, dict[str, Any]] | None):
@@ -696,8 +771,14 @@ def create_app(
     settings: Settings | None = None,
     gateway: Gateway | None = None,
     academia: AcademiaLocal | None = None,
+    telegram_api: TelegramOutboundAPI | None = None,
 ) -> Starlette:
-    bot = TelegramBot(settings or Settings.from_env(), gateway=gateway, academia=academia)
+    bot = TelegramBot(
+        settings or Settings.from_env(),
+        gateway=gateway,
+        academia=academia,
+        telegram_api=telegram_api,
+    )
     app = Starlette(routes=[
         Route("/health", bot.health, methods=["GET"]),
         Route("/telegram/webhook", bot.webhook, methods=["POST"]),

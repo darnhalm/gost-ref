@@ -82,6 +82,15 @@ class FakeAcademia:
         )]
 
 
+class FakeTelegramOutbound:
+    def __init__(self):
+        self.calls = []
+
+    async def call(self, method, payload):
+        self.calls.append((method, payload))
+        return True
+
+
 @pytest.fixture()
 def bot():
     settings = Settings(
@@ -118,6 +127,31 @@ def test_webhook_rejects_wrong_secret(bot):
     response = _post(client, _update(), secret="wrong")
     assert response.status_code == 403
     assert gateway.mcp_calls == []
+
+
+def test_cloud_webhook_acknowledges_immediately_and_delivers_outbound():
+    settings = Settings(
+        webhook_secret="webhook-secret",
+        gost_ref_url="https://protected.invalid",
+        gost_ref_api_key="api-key",
+        allowed_user_ids=frozenset({42}),
+        telegram_bot_token="bot-token",
+    )
+    gateway = FakeGateway()
+    telegram = FakeTelegramOutbound()
+    client = TestClient(create_app(
+        settings, gateway, FakeAcademia(), telegram_api=telegram,
+    ))
+
+    response = _post(client, _update("/search 9780892362509", update_id=101))
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+    assert gateway.mcp_calls == [(
+        "search_catalog", {"query": "9780892362509", "page": 1, "limit": 5},
+    )]
+    assert telegram.calls[-1][0] == "sendMessage"
+    assert "Historical &amp; Philosophical Issues" in telegram.calls[-1][1]["text"]
 
 
 def test_search_uses_protected_catalog_and_builds_buttons(bot):

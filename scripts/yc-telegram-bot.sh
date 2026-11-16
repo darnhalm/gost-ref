@@ -155,19 +155,15 @@ if [ "$UPDATE_CONFIG" = yes ]; then
 fi
 
 TOKEN_SECRET_ID=$(yc lockbox secret get --name "$TOKEN_SECRET" --format json | jget id)
+TOKEN_SECRET_JSON=$(yc lockbox secret get --name "$TOKEN_SECRET" --format json)
+TOKEN_VERSION_ID=$(printf '%s' "$TOKEN_SECRET_JSON" | jget current_version.id)
 CONFIG_SECRET_JSON=$(yc lockbox secret get --name "$CONFIG_SECRET" --format json)
 CONFIG_SECRET_ID=$(printf '%s' "$CONFIG_SECRET_JSON" | jget id)
 CONFIG_VERSION_ID=$(printf '%s' "$CONFIG_SECRET_JSON" | jget current_version.id)
 grant "Telegram runtime configuration" yc lockbox secret add-access-binding --id "$CONFIG_SECRET_ID" \
   --role lockbox.payloadViewer --service-account-id "$SA_ID"
-
-# Runtime must never read the Bot API token secret. Remove a legacy binding
-# created by versions of this script that kept token and config together.
-if yc lockbox secret list-access-bindings --id "$TOKEN_SECRET_ID" --format json \
-  | python3 -c 'import json,sys;sid=sys.argv[1];raise SystemExit(0 if any(x.get("role_id")=="lockbox.payloadViewer" and x.get("subject",{}).get("id")==sid for x in json.load(sys.stdin)) else 1)' "$SA_ID"; then
-  yc lockbox secret remove-access-binding --id "$TOKEN_SECRET_ID" \
-    --role lockbox.payloadViewer --service-account-id "$SA_ID" >/dev/null
-fi
+grant "Telegram Bot API token" yc lockbox secret add-access-binding --id "$TOKEN_SECRET_ID" \
+  --role lockbox.payloadViewer --service-account-id "$SA_ID"
 
 DEPLOY_ARGS=(
   --container-name "$CONTAINER"
@@ -180,6 +176,7 @@ DEPLOY_ARGS=(
   --zone-requests-limit 8
   --secret "environment-variable=TELEGRAM_WEBHOOK_SECRET,id=$CONFIG_SECRET_ID,version-id=$CONFIG_VERSION_ID,key=webhook-secret"
   --secret "environment-variable=GOST_REF_API_KEY,id=$CONFIG_SECRET_ID,version-id=$CONFIG_VERSION_ID,key=gost-api-key"
+  --secret "environment-variable=TELEGRAM_BOT_TOKEN,id=$TOKEN_SECRET_ID,version-id=$TOKEN_VERSION_ID,key=bot-token"
   --metadata-options aws-v1-http-endpoint=disabled,gce-http-endpoint=disabled
   --environment "GOST_REF_URL=$GOST_URL"
   --environment TELEGRAM_RATE_LIMIT=10

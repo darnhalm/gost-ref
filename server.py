@@ -333,6 +333,22 @@ async def lookup_metadata(query: str, kind: str = "auto") -> str:
 
 
 @mcp.tool()
+async def search_bibliography(query: str, include_rsl: bool = True) -> str:
+    """Единый поиск кандидатов OpenAlex и Crossref с происхождением полей.
+
+    Возвращает группы совпадающих изданий, источники каждого поля и ошибки
+    отдельных провайдеров. РГБ пока возвращается как браузерная проверка,
+    а не как автоматический API-поиск. Результаты требуют сверки с оригиналом.
+    Существующие lookup_metadata, search_catalog и check_links не меняются.
+    """
+    from gost_ref import discovery
+    try:
+        return _dump(await _offload(discovery.discover, query, include_rsl=include_rsl))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"error": f"{type(exc).__name__}: {exc}", "query": query})
+
+
+@mcp.tool()
 async def search_catalog(query: str, title: str = "", author: str = "",
                          publisher: str = "", year: str = "",
                          language: str = "", source: str = "",

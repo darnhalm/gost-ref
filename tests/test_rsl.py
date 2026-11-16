@@ -32,10 +32,10 @@ class RSLTests(unittest.TestCase):
 
     def test_marc21_preferred(self):
         from gost_ref.rsl import parse_record_with_fallback
-        marc = ("245 10 $a Первые русские города Сибири / $c В. И. Кочедамов\n"
-                "100 1# $a Кочедамов, В. И.\n"
-                "260 ## $a Москва : $b Стройиздат, $c 1978\n"
-                "300 ## $a 190 с.\n")
+        marc = ("245 10 $a Первые русские города Сибири / $c В. И. Кочедамов\\n"
+                "100 1# $a Кочедамов, В. И.\\n"
+                "260 ## $a Москва : $b Стройиздат, $c 1978\\n"
+                "300 ## $a 190 с.\\n")
         result = parse_record_with_fallback(record_url("01004095555"), marc, "<div>Заглавие</div><div>Другое</div>")
         self.assertEqual(result["parser_used"], "marc21")
         self.assertEqual(result["fields"]["title"], "Первые русские города Сибири")
